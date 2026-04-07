@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "637913467588",
+    "project_id": "disciplineportal",
+    "storage_bucket": "disciplineportal.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:637913467588:android:ef26e500039881b4f35791",
+        "android_client_info": {
+          "package_name": "com.example.discipline"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAiofcWsE2unU_Iw59lYT9K82y2nQ9huz8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

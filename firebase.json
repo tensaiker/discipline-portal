@@ -1,0 +1,1 @@
+{"flutter":{"platforms":{"android":{"default":{"projectId":"arphis-backend","appId":"1:388475199811:android:9f6ec4274674714dec8ff6","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"arphis-backend","configurations":{"android":"1:388475199811:android:9f6ec4274674714dec8ff6","web":"1:388475199811:web:de6d4cbe5b5fdc39ec8ff6"}}}}}}
