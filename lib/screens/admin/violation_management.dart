@@ -48,7 +48,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
       setState(() {
         // Auto-fill visible fields
         _nameController.text = d['fullName'] ?? '';
-        _courseController.text = d['course'] ?? '';
+        _courseController.text = d['course'] ?? ''; // AUTO-FILL COURSE
 
         // Save background data for saving
         _targetStudentUid = d['uid'];
@@ -78,22 +78,21 @@ class _ViolationManagementState extends State<ViolationManagement> {
 
     try {
       // 1. Save to 'violations' collection
-      // This ensures the violation appears in the Student's App/Alerts
       await FirebaseFirestore.instance.collection('violations').add({
         'studentUid': _targetStudentUid,
         'studentID': _idController.text.trim(),
         'studentName': _nameController.text,
+        'course': _courseController.text, // SAVING THE COURSE
         'gender': _gender ?? "N/A",
         'type': _selectedViolation,
         'description': _descController.text.trim(),
-        'status': 'approved', // Admin log is auto-approved
+        'status': 'approved',
         'timestamp': FieldValue.serverTimestamp(),
         'date': DateFormat('MMMM d, yyyy').format(DateTime.now()),
-        'reporterUid': 'ADMIN_LOG', // To distinguish from Student Reports
+        'reporterUid': 'ADMIN_LOG',
       });
 
       // 2. Update student status in 'users' collection
-      // This turns the student's Home Screen banner RED
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_targetStudentUid)
@@ -396,7 +395,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
   }
 
   // ==========================================
-  // VIEW 2: LOG NEW VIOLATION
+  // VIEW 2: LOG NEW VIOLATION (UPDATED WITH COURSE FIELD)
   // ==========================================
   Widget _buildFormView() {
     return Center(
@@ -428,18 +427,29 @@ class _ViolationManagementState extends State<ViolationManagement> {
                 ],
               ),
               const SizedBox(height: 20),
+
               _label("Student ID"),
               TextField(
                 controller: _idController,
                 onChanged: _searchAndFill,
                 decoration: _inputDeco("Type ID (e.g. PDM-2023-000000)"),
               ),
+
               _label("Student Name"),
               TextField(
                 controller: _nameController,
                 readOnly: true,
                 decoration: _inputDeco("Auto-filled"),
               ),
+
+              // NEW COURSE FIELD ADDED HERE
+              _label("Course"),
+              TextField(
+                controller: _courseController,
+                readOnly: true,
+                decoration: _inputDeco("Auto-filled"),
+              ),
+
               _label("Violation Type"),
               DropdownButtonFormField<String>(
                 value: _selectedViolation,
