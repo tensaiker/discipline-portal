@@ -13,7 +13,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController();
+  // Using this controller for both Email or Student ID
+  final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isPasswordVisible = false;
@@ -49,22 +50,55 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     _lockoutTimer?.cancel();
-    _emailController.dispose();
+    _identifierController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
+  // ==========================================
+  // UPDATED LOGIN LOGIC (ID LOOKUP)
+  // ==========================================
   Future<void> loginUser() async {
     if (_isLockedOut) return;
 
-    setState(() => _isLoading = true);
-    try {
-      UserCredential userCredential = await FirebaseAuth.instance
-          .signInWithEmailAndPassword(
-            email: _emailController.text.trim(),
-            password: _passwordController.text.trim(),
-          );
+    String input = _identifierController.text.trim();
+    String password = _passwordController.text.trim();
 
+    if (input.isEmpty || password.isEmpty) {
+      _showError("Please enter your Student ID and Password.");
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      String emailToSignIn = "";
+
+      // 1. Check if input is an email or an ID
+      if (input.contains('@')) {
+        emailToSignIn = input;
+      } else {
+        // 2. ID LOOKUP: Search Firestore for the studentID
+        var userQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .where('studentID', isEqualTo: input)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isEmpty) {
+          throw FirebaseAuthException(
+            code: 'user-not-found',
+            message: 'Student ID not found.',
+          );
+        }
+        emailToSignIn = userQuery.docs.first.get('email');
+      }
+
+      // 3. ACTUAL FIREBASE SIGN IN
+      UserCredential userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: emailToSignIn, password: password);
+
+      // 4. FETCH USER ROLE FOR ROUTING
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
@@ -88,15 +122,22 @@ class _LoginScreenState extends State<LoginScreen> {
           }
         }
       }
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       setState(() {
         _failedAttempts++;
         if (_failedAttempts >= 3) {
           _startLockout();
         } else {
-          _showError("Invalid credentials. Attempt $_failedAttempts/3");
+          String msg = "Invalid credentials. Attempt $_failedAttempts/3";
+          if (e.code == 'user-not-found')
+            msg = "ID not found. Attempt $_failedAttempts/3";
+          if (e.code == 'wrong-password')
+            msg = "Incorrect password. Attempt $_failedAttempts/3";
+          _showError(msg);
         }
       });
+    } catch (e) {
+      _showError("An error occurred. Please try again.");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -146,15 +187,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 50),
 
-              // 1. EMAIL FIELD
-              _buildInputLabel("Email/Student ID"),
+              // 1. STUDENT ID FIELD
+              _buildInputLabel("Student ID / Email"),
               TextField(
-                controller: _emailController,
+                controller: _identifierController,
                 enabled: !_isLockedOut,
-                decoration: _inputDecoration("example@gmail.com"),
+                decoration: _inputDecoration("e.g. PDM-2024-000001"),
               ),
 
-              // 2. TIMER MESSAGE (Directly under the Email Field)
+              // 2. TIMER MESSAGE
               if (_isLockedOut)
                 Align(
                   alignment: Alignment.centerLeft,
@@ -306,11 +347,9 @@ class _LoginScreenState extends State<LoginScreen> {
       hintText: hint,
       suffixIcon: suffixIcon,
       filled: true,
-      // If locked, background stays slightly red/white as per your screenshot
       fillColor: _isLockedOut ? const Color(0xFFFFF5F5) : Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
 
-      // THE RED BORDER LOGIC
       disabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
         borderSide: BorderSide(

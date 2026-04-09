@@ -27,31 +27,76 @@ class StudentAlerts extends StatelessWidget {
 
               Expanded(
                 child: StreamBuilder<QuerySnapshot>(
-                  // Filters by the student's unique UID so they only see their own reports
+                  // 1. GET VIOLATIONS COMMITTED BY THE STUDENT
                   stream: FirebaseFirestore.instance
                       .collection('violations')
                       .where('studentUid', isEqualTo: user?.uid)
-                      .orderBy('timestamp', descending: true)
                       .snapshots(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
+                  builder: (context, offenderSnapshot) {
+                    if (offenderSnapshot.connectionState ==
+                        ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
                     }
-                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          "No notifications yet.",
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      );
-                    }
 
-                    var alerts = snapshot.data!.docs;
+                    return StreamBuilder<QuerySnapshot>(
+                      // 2. GET INCIDENTS REPORTED BY THE STUDENT
+                      stream: FirebaseFirestore.instance
+                          .collection('violations')
+                          .where('reporterUid', isEqualTo: user?.uid)
+                          .snapshots(),
+                      builder: (context, reporterSnapshot) {
+                        if (reporterSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
 
-                    return ListView.builder(
-                      itemCount: alerts.length,
-                      itemBuilder: (context, index) {
-                        return _buildDynamicAlertCard(alerts[index]);
+                        // --- MERGE AND SORT THE LISTS ---
+                        var offenderDocs = offenderSnapshot.hasData
+                            ? offenderSnapshot.data!.docs
+                            : [];
+                        var reporterDocs = reporterSnapshot.hasData
+                            ? reporterSnapshot.data!.docs
+                            : [];
+
+                        // Combine both lists into one timeline
+                        List<DocumentSnapshot> allAlerts = [
+                          ...offenderDocs,
+                          ...reporterDocs,
+                        ];
+
+                        // Sort them by timestamp (newest first)
+                        allAlerts.sort((a, b) {
+                          var dataA = a.data() as Map<String, dynamic>;
+                          var dataB = b.data() as Map<String, dynamic>;
+                          Timestamp? tA = dataA['timestamp'];
+                          Timestamp? tB = dataB['timestamp'];
+                          if (tA == null || tB == null) return 0;
+                          return tB.compareTo(tA); // Descending order
+                        });
+
+                        if (allAlerts.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              "No notifications yet.",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          itemCount: allAlerts.length,
+                          itemBuilder: (context, index) {
+                            var doc = allAlerts[index];
+                            var data = doc.data() as Map<String, dynamic>;
+
+                            // Check if this document is an OFFENSE or a REPORT
+                            bool isOffense = data['studentUid'] == user?.uid;
+
+                            return _buildDynamicAlertCard(data, isOffense);
+                          },
+                        );
                       },
                     );
                   },
@@ -64,49 +109,70 @@ class StudentAlerts extends StatelessWidget {
     );
   }
 
-  Widget _buildDynamicAlertCard(DocumentSnapshot doc) {
-    var data = doc.data() as Map<String, dynamic>;
+  Widget _buildDynamicAlertCard(Map<String, dynamic> data, bool isOffense) {
     String status = (data['status'] ?? 'pending').toString().toLowerCase();
     String type = data['type'] ?? 'Incident';
 
-    // --- UI CONFIGURATION BASED ON ADMIN ACTION ---
+    // --- UI CONFIGURATION ---
     Color themeColor = Colors.grey;
     IconData icon = Icons.info_outline;
     String title = "Update";
     String description = "";
 
-    switch (status) {
-      case 'pending':
-        title = "Report Submitted";
-        description = "Your report for $type is currently under review.";
-        themeColor = Colors.orange;
-        icon = Icons.access_time;
-        break;
-      case 'approved':
-        title = "Incident Approved";
-        description = "The Admin has verified your report for $type.";
-        themeColor = Colors.redAccent;
-        icon = Icons.warning_amber_rounded;
-        break;
-      case 'declined':
-        title = "Report Declined";
-        description =
-            "Your report for $type was not approved by the administration.";
-        themeColor = Colors.blueGrey;
-        icon = Icons.cancel_outlined;
-        break;
-      case 'resolved':
-      case 'cleared':
-        title = "Record Resolved";
-        description = "Your $type violation has been successfully cleared.";
+    // 1. IF THEY ARE THE OFFENDER (They did the bad thing)
+    if (isOffense) {
+      if (status == 'resolved' || status == 'cleared') {
+        title = "✅ Violation Cleared";
+        description = "Your disciplinary record for $type has been resolved.";
         themeColor = Colors.green;
         icon = Icons.check_circle_outline;
-        break;
-      default:
-        title = "Status Update";
-        description = "There is an update regarding your $type record.";
-        themeColor = Colors.brown;
-        icon = Icons.notifications;
+      } else {
+        title = "⚠️ Violation Notice";
+        description =
+            "You have been cited for a violation: $type. Check your handbook.";
+        themeColor = Colors.redAccent;
+        icon = Icons.warning_amber_rounded;
+      }
+    }
+    // 2. IF THEY ARE THE REPORTER (They reported someone else)
+    else {
+      switch (status) {
+        case 'pending':
+          title = "📝 Report Submitted";
+          description =
+              "The incident you reported ($type) is waiting for Admin review.";
+          themeColor = Colors.orange;
+          icon = Icons.access_time;
+          break;
+        case 'approved':
+          title = "🔍 Report Under Review";
+          description =
+              "An Admin is now actively investigating the $type incident you reported.";
+          themeColor = Colors.blue;
+          icon = Icons.remove_red_eye;
+          break;
+        case 'declined':
+          title = "❌ Report Dismissed";
+          description =
+              "The $type incident you reported was reviewed but declined by the Admin.";
+          themeColor = Colors.blueGrey;
+          icon = Icons.cancel_outlined;
+          break;
+        case 'resolved':
+        case 'cleared':
+          title = "✅ Report Closed";
+          description =
+              "Action has been taken on the $type incident you reported. Thank you.";
+          themeColor = Colors.green;
+          icon = Icons.task_alt;
+          break;
+        default:
+          title = "Status Update";
+          description =
+              "There is an update regarding the $type incident you reported.";
+          themeColor = Colors.brown;
+          icon = Icons.notifications;
+      }
     }
 
     // Time formatting using intl

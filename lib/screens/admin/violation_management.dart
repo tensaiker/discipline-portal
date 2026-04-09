@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 
 class ViolationManagement extends StatefulWidget {
   const ViolationManagement({super.key});
@@ -21,6 +23,10 @@ class _ViolationManagementState extends State<ViolationManagement> {
   final _descController = TextEditingController();
   String? _selectedViolation;
 
+  // Background Data for Database
+  String? _targetStudentUid;
+  String? _gender;
+
   // Design Colors
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _bgColor = const Color(0xFFE5DCD3);
@@ -28,7 +34,9 @@ class _ViolationManagementState extends State<ViolationManagement> {
 
   // LOGIC: Auto-fill Student Info when ID is typed
   Future<void> _searchAndFill(String id) async {
-    if (id.length < 5) return;
+    // Search when the ID reaches the standard length (e.g., PDM-2023-000000)
+    if (id.length < 15) return;
+
     var res = await FirebaseFirestore.instance
         .collection('users')
         .where('studentID', isEqualTo: id)
@@ -38,42 +46,70 @@ class _ViolationManagementState extends State<ViolationManagement> {
     if (res.docs.isNotEmpty) {
       var d = res.docs.first.data();
       setState(() {
+        // Auto-fill visible fields
         _nameController.text = d['fullName'] ?? '';
         _courseController.text = d['course'] ?? '';
+
+        // Save background data for saving
+        _targetStudentUid = d['uid'];
+        _gender = d['sex'];
+      });
+    } else {
+      // Clear if not found
+      setState(() {
+        _nameController.clear();
+        _courseController.clear();
+        _targetStudentUid = null;
+        _gender = null;
       });
     }
   }
 
-  // LOGIC: Save Violation (This updates your Dashboard)
+  // LOGIC: Save Violation (Updates both Admin and Student Dashboards)
   Future<void> _saveViolation() async {
-    if (_idController.text.isEmpty || _selectedViolation == null) return;
-
-    // 1. Save to 'violations' (This triggers the Pie Chart and Stat Card)
-    await FirebaseFirestore.instance.collection('violations').add({
-      'studentID': _idController.text,
-      'studentName': _nameController.text,
-      'type': _selectedViolation,
-      'description': _descController.text,
-      'status':
-          'approved', // Saving as approved so it counts as a violation immediately
-      'date': DateTime.now().toString(),
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-
-    // 2. Update the student's status in 'users' (Turns their record red)
-    var student = await FirebaseFirestore.instance
-        .collection('users')
-        .where('studentID', isEqualTo: _idController.text)
-        .get();
-
-    if (student.docs.isNotEmpty) {
-      await student.docs.first.reference.update({
-        'status': 'violations',
-        'activeViolation': _selectedViolation,
-      });
+    if (_idController.text.isEmpty ||
+        _selectedViolation == null ||
+        _targetStudentUid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a valid Student ID")),
+      );
+      return;
     }
 
-    _resetForm();
+    try {
+      // 1. Save to 'violations' collection
+      // This ensures the violation appears in the Student's App/Alerts
+      await FirebaseFirestore.instance.collection('violations').add({
+        'studentUid': _targetStudentUid,
+        'studentID': _idController.text.trim(),
+        'studentName': _nameController.text,
+        'gender': _gender ?? "N/A",
+        'type': _selectedViolation,
+        'description': _descController.text.trim(),
+        'status': 'approved', // Admin log is auto-approved
+        'timestamp': FieldValue.serverTimestamp(),
+        'date': DateFormat('MMMM d, yyyy').format(DateTime.now()),
+        'reporterUid': 'ADMIN_LOG', // To distinguish from Student Reports
+      });
+
+      // 2. Update student status in 'users' collection
+      // This turns the student's Home Screen banner RED
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_targetStudentUid)
+          .update({
+            'status': 'violations',
+            'activeViolation': _selectedViolation,
+          });
+
+      _showSuccessSnackBar("Violation logged and student notified!");
+      _resetForm();
+    } catch (e) {
+      print("Error saving violation: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    }
   }
 
   void _resetForm() {
@@ -83,8 +119,16 @@ class _ViolationManagementState extends State<ViolationManagement> {
     _descController.clear();
     setState(() {
       _selectedViolation = null;
+      _targetStudentUid = null;
+      _gender = null;
       _view = 0;
     });
+  }
+
+  void _showSuccessSnackBar(String msg) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.green));
   }
 
   @override
@@ -96,12 +140,11 @@ class _ViolationManagementState extends State<ViolationManagement> {
   }
 
   // ==========================================
-  // VIEW 1: THE VIOLATION LIST (Matches image_d7da67.png)
+  // VIEW 1: THE VIOLATION LIST
   // ==========================================
   Widget _buildListView() {
     return Column(
       children: [
-        // Search & Add Header
         Padding(
           padding: const EdgeInsets.all(15.0),
           child: Row(
@@ -155,7 +198,6 @@ class _ViolationManagementState extends State<ViolationManagement> {
           ),
         ),
 
-        // Filter Tabs
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -192,7 +234,6 @@ class _ViolationManagementState extends State<ViolationManagement> {
 
         const SizedBox(height: 15),
 
-        // Data Table Container
         Expanded(
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
@@ -218,7 +259,9 @@ class _ViolationManagementState extends State<ViolationManagement> {
                         return const Center(child: CircularProgressIndicator());
 
                       var docs = snapshot.data!.docs.where((doc) {
-                        var name = doc['fullName'].toString().toLowerCase();
+                        var name = (doc['fullName'] ?? '')
+                            .toString()
+                            .toLowerCase();
                         var status = doc['status'] ?? 'cleared';
                         bool matchesSearch = name.contains(_searchQuery);
                         bool matchesTab = true;
@@ -293,18 +336,18 @@ class _ViolationManagementState extends State<ViolationManagement> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  data['fullName'],
+                  data['fullName'] ?? 'N/A',
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
                   ),
                 ),
                 Text(
-                  data['studentID'],
+                  data['studentID'] ?? 'N/A',
                   style: const TextStyle(fontSize: 10, color: Colors.grey),
                 ),
                 Text(
-                  data['course'],
+                  data['course'] ?? 'N/A',
                   style: const TextStyle(fontSize: 10, color: Colors.grey),
                 ),
               ],
@@ -353,7 +396,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
   }
 
   // ==========================================
-  // VIEW 2: LOG NEW VIOLATION (Matches your logic)
+  // VIEW 2: LOG NEW VIOLATION
   // ==========================================
   Widget _buildFormView() {
     return Center(
@@ -389,7 +432,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
               TextField(
                 controller: _idController,
                 onChanged: _searchAndFill,
-                decoration: _inputDeco("Type ID (e.g. PDM-202...)"),
+                decoration: _inputDeco("Type ID (e.g. PDM-2023-000000)"),
               ),
               _label("Student Name"),
               TextField(
@@ -448,6 +491,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
     ),
   );
+
   InputDecoration _inputDeco(String h) => InputDecoration(
     hintText: h,
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),

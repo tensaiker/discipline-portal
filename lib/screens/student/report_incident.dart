@@ -59,24 +59,33 @@ class _ReportIncidentState extends State<ReportIncident> {
     try {
       final user = FirebaseAuth.instance.currentUser;
 
-      // Get User Data
+      // 1. Fetch the latest user profile data
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user!.uid)
           .get();
 
+      if (!userDoc.exists) {
+        throw Exception("User profile not found. Please log out and back in.");
+      }
+
+      // Convert to Map to prevent "Bad State" errors
+      Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+
       String formattedDate = DateFormat('MMMM d, yyyy').format(_pickedDate!);
 
-      // --- THE CRITICAL CHANGE IS HERE ---
+      // 2. SAVE TO DATABASE
       await FirebaseFirestore.instance.collection('violations').add({
-        'studentUid':
-            user.uid, // THIS LINKS THE REPORT TO THE STUDENT'S ALERTS TAB
-        'studentName': userDoc['fullName'] ?? "Unknown",
-        'studentID': userDoc['studentID'] ?? "No ID",
+        'studentUid': null, // This is NOT your violation
+        'reporterUid': user.uid, // This IS your report
+        // Use the EXACT names from your Firestore screenshot
+        'reporterName': userData['fullName'] ?? "Unknown Name",
+        'reporterID': userData['studentID'] ?? "N/A",
+
         'type': _selectedViolation,
         'description': _detailsController.text.trim(),
         'date': formattedDate,
-        'status': 'pending', // Initial status
+        'status': 'pending',
         'timestamp': FieldValue.serverTimestamp(),
       });
 

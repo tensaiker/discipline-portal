@@ -30,173 +30,221 @@ class StudentHome extends StatelessWidget {
           String course = userData['course'] ?? "No Course";
 
           return StreamBuilder<QuerySnapshot>(
-            // 2. GET VIOLATIONS (Filtered by YOUR Unique ID)
+            // 2. OFFENDER STREAM: Only violations assigned TO this student by Admin
             stream: FirebaseFirestore.instance
                 .collection('violations')
                 .where('studentUid', isEqualTo: user?.uid)
                 .snapshots(),
-            builder: (context, violationSnapshot) {
-              if (!violationSnapshot.hasData)
+            builder: (context, offenderSnapshot) {
+              if (!offenderSnapshot.hasData)
                 return const Center(child: CircularProgressIndicator());
 
-              // Calculate dynamic counts from the database
-              var docs = violationSnapshot.data!.docs;
-              int totalOffenses = docs.length;
-              int pending = docs.where((d) => d['status'] == 'pending').length;
-              int resolved = docs
-                  .where(
-                    (d) =>
-                        d['status'] == 'resolved' || d['status'] == 'cleared',
-                  )
-                  .length;
+              return StreamBuilder<QuerySnapshot>(
+                // 3. REPORTER STREAM: Only incidents THIS student reported (Witness reports)
+                stream: FirebaseFirestore.instance
+                    .collection('violations')
+                    .where('reporterUid', isEqualTo: user?.uid)
+                    .snapshots(),
+                builder: (context, reporterSnapshot) {
+                  if (!reporterSnapshot.hasData)
+                    return const Center(child: CircularProgressIndicator());
 
-              return SingleChildScrollView(
-                padding: const EdgeInsets.only(
-                  top: 60,
-                  left: 25,
-                  right: 25,
-                  bottom: 30,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // --- HEADER ---
-                    Row(
+                  // --- DATA LOGIC ---
+                  var myViolations = offenderSnapshot
+                      .data!
+                      .docs; // Things I COMMITTED (Perpetrator)
+                  var myReports = reporterSnapshot
+                      .data!
+                      .docs; // Things I REPORTED (Witness)
+
+                  // 1. Active Violations (Only from things I committed)
+                  int activeViolationsCount = myViolations
+                      .where(
+                        (d) =>
+                            d['status'] != 'resolved' &&
+                            d['status'] != 'cleared',
+                      )
+                      .length;
+
+                  // 2. Dashboard Stats (Tracking the reports I submitted as a witness)
+                  int totalIReported = myReports.length;
+                  int pendingMyReports = myReports
+                      .where((d) => d['status'] == 'pending')
+                      .length;
+
+                  // 3. Resolved Violations (My own committed offenses that are now finished)
+                  int myResolvedViolations = myViolations
+                      .where(
+                        (d) =>
+                            d['status'] == 'resolved' ||
+                            d['status'] == 'cleared',
+                      )
+                      .length;
+
+                  // 4. Alerts (Combined status of my witness reports)
+                  int myAlertsCount = myReports
+                      .where(
+                        (d) =>
+                            d['status'] == 'pending' ||
+                            d['status'] == 'approved' ||
+                            d['status'] == 'resolved',
+                      )
+                      .length;
+
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.only(
+                      top: 60,
+                      left: 25,
+                      right: 25,
+                      bottom: 30,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: _darkBrown,
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: const Icon(
-                            Icons.person,
-                            color: Color(0xFFFFC107),
-                            size: 35,
-                          ),
-                        ),
-                        const SizedBox(width: 15),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        // --- HEADER ---
+                        Row(
                           children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                color: _darkBrown,
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              child: const Icon(
+                                Icons.person,
+                                color: Color(0xFFFFC107),
+                                size: 35,
                               ),
                             ),
-                            Text(
-                              studentID,
-                              style: const TextStyle(
-                                color: Colors.grey,
-                                fontSize: 12,
-                              ),
+                            const SizedBox(width: 15),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  name,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  studentID,
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  course,
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              course,
-                              style: const TextStyle(
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.logout_rounded,
                                 color: Colors.grey,
-                                fontSize: 12,
                               ),
+                              onPressed: () =>
+                                  FirebaseAuth.instance.signOut().then(
+                                    (_) => Navigator.pushReplacementNamed(
+                                      context,
+                                      '/login',
+                                    ),
+                                  ),
                             ),
                           ],
                         ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.logout_rounded,
-                            color: Colors.grey,
+                        const SizedBox(height: 30),
+
+                        Text(
+                          "Welcome, ${name.split(' ')[0].toLowerCase()}",
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            height: 1.1,
                           ),
-                          onPressed: () => FirebaseAuth.instance.signOut().then(
-                            (_) => Navigator.pushReplacementNamed(
-                              context,
-                              '/login',
+                        ),
+                        const Text(
+                          "Here's an overview of your discipline record",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                        const SizedBox(height: 25),
+
+                        // --- STATUS CARD: Only changes if YOU committed a violation ---
+                        _buildActiveViolationCard(activeViolationsCount),
+                        const SizedBox(height: 25),
+
+                        // --- STATS GRID: Tracking your Witness Reporting Activity ---
+                        GridView.count(
+                          crossAxisCount: 2,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          crossAxisSpacing: 15,
+                          mainAxisSpacing: 15,
+                          childAspectRatio: 1.4,
+                          children: [
+                            _statCard(
+                              "Total Reports Sent",
+                              totalIReported.toString(),
+                              Colors.indigo,
                             ),
+                            _statCard(
+                              "Pending Approval",
+                              pendingMyReports.toString(),
+                              Colors.pink,
+                            ),
+                            _statCard(
+                              "Resolved Offenses",
+                              myResolvedViolations.toString(),
+                              Colors.green,
+                            ),
+                            _statCard(
+                              "Alerts",
+                              myAlertsCount.toString(),
+                              Colors.red,
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 35),
+                        const Text(
+                          "Recent Records",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 30),
+                        const SizedBox(height: 15),
 
-                    Text(
-                      "Welcome, ${name.split(' ')[0].toLowerCase()}",
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        height: 1.1,
-                      ),
-                    ),
-                    const Text(
-                      "Here's an overview of your discipline record",
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                    const SizedBox(height: 25),
-
-                    // --- STATUS CARD (Changes color based on data) ---
-                    _buildActiveViolationCard(totalOffenses),
-                    const SizedBox(height: 25),
-
-                    // --- STATS GRID ---
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: 15,
-                      mainAxisSpacing: 15,
-                      childAspectRatio: 1.4,
-                      children: [
-                        _statCard(
-                          "Total Incidents",
-                          totalOffenses.toString(),
-                          Colors.indigo,
-                        ),
-                        _statCard("Pending", pending.toString(), Colors.pink),
-                        _statCard(
-                          "Resolved",
-                          resolved.toString(),
-                          Colors.green,
-                        ),
-                        _statCard(
-                          "Alerts",
-                          totalOffenses >= 3 ? "!" : "0",
-                          Colors.red,
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 35),
-                    const Text(
-                      "Recent Records",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-
-                    // --- RECENT RECORDS LIST ---
-                    if (docs.isEmpty)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 40),
-                          child: Text(
-                            "No records found.",
-                            style: TextStyle(color: Colors.grey),
+                        // --- RECENT RECORDS LIST: ONLY shows violations YOU committed ---
+                        if (myViolations.isEmpty)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 40),
+                              child: Text(
+                                "No violation records found on your ID.",
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            ),
+                          )
+                        else
+                          ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: myViolations.length,
+                            itemBuilder: (context, index) =>
+                                _buildViolationItem(myViolations[index]),
                           ),
-                        ),
-                      )
-                    else
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: docs.length,
-                        itemBuilder: (context, index) =>
-                            _buildViolationItem(docs[index]),
-                      ),
-                  ],
-                ),
+                      ],
+                    ),
+                  );
+                },
               );
             },
           );
@@ -205,6 +253,7 @@ class StudentHome extends StatelessWidget {
     );
   }
 
+  // REUSABLE UI HELPERS (Designs remain unchanged)
   Widget _buildActiveViolationCard(int count) {
     bool isClear = count == 0;
     return Container(
@@ -236,7 +285,7 @@ class StudentHome extends StatelessWidget {
           ),
           if (!isClear)
             Text(
-              "You have $count recorded offenses", // <--- THIS IS NOW DYNAMIC
+              "You have $count recorded offenses",
               style: const TextStyle(
                 color: Colors.redAccent,
                 fontSize: 13,
@@ -252,13 +301,9 @@ class StudentHome extends StatelessWidget {
     var data = doc.data() as Map<String, dynamic>;
     String type = data['type'] ?? "Violation";
     String desc = data['description'] ?? "No details provided.";
-
-    // FORMAT DATE FROM FIRESTORE TIMESTAMP
-    String formattedDate = "N/A";
-    if (data['timestamp'] != null) {
-      Timestamp t = data['timestamp'];
-      formattedDate = DateFormat('MMM d, yyyy').format(t.toDate());
-    }
+    String formattedDate = data['timestamp'] != null
+        ? DateFormat('MMM d, yyyy').format(data['timestamp'].toDate())
+        : "N/A";
 
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
@@ -272,11 +317,10 @@ class StudentHome extends StatelessWidget {
       child: IntrinsicHeight(
         child: Row(
           children: [
-            // Vertical color bar
             Container(
               width: 6,
               decoration: BoxDecoration(
-                color: type.contains("Uniform") ? Colors.orange : Colors.red,
+                color: Colors.red, // Always red for committed violations
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(15),
                   bottomLeft: Radius.circular(15),

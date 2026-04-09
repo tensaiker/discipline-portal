@@ -14,12 +14,10 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
   String _selectedTab = "All"; // Filter: All, Pending, Approved, Resolved
 
   final Color _darkBrown = const Color(0xFF513C2C);
-  final Color _bgColor = const Color(0xFFE5DCD3); // Matching your background
+  final Color _bgColor = const Color(0xFFE5DCD3);
   final Color _cardColor = const Color(0xFFF9F7F2);
 
   // --- DATABASE LOGIC ---
-
-  // This updates the status and automatically notifies the student's Alerts tab
   Future<void> _updateStatus(String docId, String newStatus) async {
     try {
       await FirebaseFirestore.instance
@@ -48,7 +46,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           child: TextField(
             onChanged: (val) => setState(() => _searchQuery = val),
             decoration: InputDecoration(
-              hintText: "Search Student ID",
+              hintText: "Search ID (Reporter or Student)",
               prefixIcon: const Icon(Icons.search),
               filled: true,
               fillColor: _cardColor,
@@ -92,13 +90,12 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           child: StreamBuilder<QuerySnapshot>(
             stream: _getFilteredStream(),
             builder: (context, snapshot) {
-              // --- 1. SAFETY NET: Catch Firebase Errors without crashing ---
               if (snapshot.hasError) {
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(20.0),
                     child: Text(
-                      "Firestore Error: ${snapshot.error}\n\nCheck VS Code Debug Console for the index link!",
+                      "Firestore Error: ${snapshot.error}",
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.red),
                     ),
@@ -106,21 +103,26 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
                 );
               }
 
-              // --- 2. LOADING STATE ---
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              // --- 3. SAFE DATA CHECK: Prevents the Null Operator Crash ---
               if (!snapshot.hasData) {
                 return const Center(child: Text("Loading data..."));
               }
 
+              // --- CRASH FIX: Using data['field'] instead of doc['field'] ---
               var docs = snapshot.data!.docs.where((doc) {
-                String studentID = (doc['studentID'] ?? "")
+                Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+
+                // Search both reporterID (new reports) and studentID (old records)
+                String rID = (data['reporterID'] ?? "")
                     .toString()
                     .toLowerCase();
-                return studentID.contains(_searchQuery.toLowerCase());
+                String sID = (data['studentID'] ?? "").toString().toLowerCase();
+
+                return rID.contains(_searchQuery.toLowerCase()) ||
+                    sID.contains(_searchQuery.toLowerCase());
               }).toList();
 
               if (docs.isEmpty) {
@@ -150,6 +152,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
   }
 
   Widget _buildIncidentCard(DocumentSnapshot doc, int displayNum) {
+    // --- CRASH FIX: Always convert to Map first ---
     var data = doc.data() as Map<String, dynamic>;
     String status = (data['status'] ?? 'pending').toString().toLowerCase();
 
@@ -172,7 +175,6 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header: Incident # and Status Badge
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -188,7 +190,11 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           ),
           const Divider(height: 30),
 
-          _infoRow("REPORTED BY:", data['studentID'] ?? "N/A"),
+          // --- FIX: Show Reporter ID for incoming reports ---
+          _infoRow(
+            "REPORTED BY:",
+            data['reporterID'] ?? data['studentID'] ?? "Unknown",
+          ),
           _infoRow("VIOLATION TYPE:", data['type'] ?? "Other"),
           _infoRow("DATE:", dateStr),
 
@@ -212,7 +218,6 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
             child: Text(data['description'] ?? "No description provided."),
           ),
 
-          // ACTION BUTTONS logic
           if (status == 'pending')
             Row(
               children: [
@@ -239,7 +244,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
               _darkBrown,
               () => _updateStatus(doc.id, 'resolved'),
             )
-          else if (status == 'resolved')
+          else if (status == 'resolved' || status == 'cleared')
             const Center(
               child: Text(
                 "✅ TASK COMPLETED",
@@ -279,7 +284,11 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
   Widget _statusBadge(String status) {
     Color color = status == 'pending'
         ? Colors.amber
-        : (status == 'approved' ? Colors.green : Colors.brown);
+        : (status == 'approved' ? Colors.blue : Colors.green);
+
+    // Simple logic to handle 'declined'
+    if (status == 'declined') color = Colors.red;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(

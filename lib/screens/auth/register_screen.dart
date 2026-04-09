@@ -14,8 +14,12 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final PageController _pageController = PageController();
 
-  // Controllers
-  final _nameController = TextEditingController();
+  // Controllers (Updated for new Name format)
+  final _firstNameController = TextEditingController();
+  final _middleNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _suffixController = TextEditingController();
+
   final _idController = TextEditingController();
   final _emailController = TextEditingController();
   final _parentController = TextEditingController();
@@ -23,7 +27,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // State Variables
   String? _selectedCourse;
+  String? _selectedSex; // New Sex Dropdown Variable
   bool _isPasswordVisible = false;
+
   final List<String> _courses = [
     "BS Information Technology",
     "BS Computer Science",
@@ -34,38 +40,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final Color _yellow = const Color(0xFFFFC107);
 
   // ==========================================
-  // NEW: VALIDATION LOGIC
+  // VALIDATION LOGIC
   // ==========================================
   bool _validateStep1() {
-    // 1. Full Name Check
-    if (_nameController.text.trim().isEmpty) {
-      _showValidationError("Full Name");
+    // 1. Name Check (First & Last are required)
+    if (_firstNameController.text.trim().isEmpty) {
+      _showValidationError("First Name");
       return false;
     }
-    // 2. Course Check
+    if (_lastNameController.text.trim().isEmpty) {
+      _showValidationError("Last Name");
+      return false;
+    }
+    // 2. Sex Check
+    if (_selectedSex == null) {
+      _showValidationError("Sex");
+      return false;
+    }
+    // 3. Course Check
     if (_selectedCourse == null) {
       _showValidationError("Course");
       return false;
     }
-    // 3. Student ID Check (Expecting XXXX-XXXXXX = 11 characters)
-    if (_idController.text.length < 11) {
-      _showValidationError("Student ID");
+    // 4. Student ID Check (Expecting exactly 10 digits to match PDM-XXXX-XXXXXX)
+    if (_idController.text.length != 10) {
+      _showValidationError("Student ID (Must be 10 digits)");
       return false;
     }
-    // 4. Email Check (Basic format check)
+    // 5. Email Check
     if (!_emailController.text.contains('@') ||
         !_emailController.text.contains('.')) {
       _showValidationError("Email");
       return false;
     }
-    // 5. Parent Contact Check (Must be 12 digits)
-    if (_parentController.text.length != 12) {
-      _showValidationError("Parent Contact");
+    // 6. Parent Contact Check (Expecting exactly 8 digits to match 639XXXXXXXX)
+    if (_parentController.text.length != 8) {
+      _showValidationError("Parent Contact (Must be 8 numbers)");
       return false;
     }
-    // 6. Password Check (Minimum 6 characters)
+    // 7. Password Check
     if (_passwordController.text.length < 6) {
-      _showValidationError("Password");
+      _showValidationError("Password (Min 6 characters)");
       return false;
     }
 
@@ -87,25 +102,58 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ==========================================
   Future<void> _handleRegister() async {
     try {
+      // 1. Combine Name
+      String fName = _firstNameController.text.trim();
+      String mName = _middleNameController.text.trim();
+      String lName = _lastNameController.text.trim();
+      String suffix = _suffixController.text.trim();
+
+      String combinedFullName =
+          "$fName ${mName.isNotEmpty ? '$mName ' : ''}$lName${suffix.isNotEmpty ? ' $suffix' : ''}"
+              .trim();
+
+      // 2. Format ID and Phone
+      // Grabs the 10 digits and forces the hyphen: PDM-XXXX-XXXXXX
+      String idString = _idController.text.trim();
+      String formattedId =
+          "PDM-${idString.substring(0, 4)}-${idString.substring(4)}";
+
+      // Combines the fixed 639 with the 8 typed digits
+      String formattedParent = "639${_parentController.text.trim()}";
+
+      // 3. Auth Creation
       UserCredential cred = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
             email: _emailController.text.trim(),
             password: _passwordController.text.trim(),
           );
 
+      // 4. Save to Database
       StudentModel student = StudentModel(
         uid: cred.user!.uid,
-        fullName: _nameController.text.trim(),
+        fullName: combinedFullName,
         course: _selectedCourse!,
-        studentID: "PDM-${_idController.text.trim()}",
+        studentID: formattedId,
         email: _emailController.text.trim(),
-        parentContact: _parentController.text.trim(),
+        parentContact: formattedParent,
       );
+
+      // We add the specific fields to the map so your Admin app has clean data
+      Map<String, dynamic> studentData = student.toMap();
+      studentData['firstName'] = fName;
+      studentData['middleName'] = mName;
+      studentData['lastName'] = lName;
+      studentData['suffix'] = suffix;
+      studentData['sex'] = _selectedSex;
+      studentData['role'] = 'student';
+      studentData['status'] =
+          'pending'; // Ensure they go to your Admin pending tab!
+      studentData['isApproved'] = false;
 
       await FirebaseFirestore.instance
           .collection('users')
           .doc(cred.user!.uid)
-          .set(student.toMap());
+          .set(studentData);
 
       _pageController.nextPage(
         duration: const Duration(milliseconds: 300),
@@ -141,9 +189,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
             style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 30),
-          _textField("Full Name", _nameController, hint: "Juan Dela Cruz"),
 
-          // Dropdown
+          // --- ROW 1: First & Middle Name ---
+          Row(
+            children: [
+              Expanded(
+                child: _textField(
+                  "First Name",
+                  _firstNameController,
+                  hint: "Juan",
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _textField(
+                  "Middle Name",
+                  _middleNameController,
+                  hint: "Dela (Opt)",
+                ),
+              ),
+            ],
+          ),
+
+          // --- ROW 2: Last Name & Suffix ---
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: _textField(
+                  "Last Name",
+                  _lastNameController,
+                  hint: "Cruz",
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 1,
+                child: _textField("Suffix", _suffixController, hint: "Jr."),
+              ),
+            ],
+          ),
+
+          // --- SEX DROPDOWN ---
+          Padding(
+            padding: const EdgeInsets.only(bottom: 15),
+            child: DropdownButtonFormField<String>(
+              value: _selectedSex,
+              decoration: _inputDecoration("Sex"),
+              items: ["Male", "Female"]
+                  .map(
+                    (s) => DropdownMenuItem(
+                      value: s,
+                      child: Text(s, style: const TextStyle(fontSize: 14)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) => setState(() => _selectedSex = val),
+            ),
+          ),
+
+          // --- COURSE DROPDOWN ---
           Padding(
             padding: const EdgeInsets.only(bottom: 15),
             child: DropdownButtonFormField<String>(
@@ -161,24 +266,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
 
+          // --- ID & CONTACT FIELDS (With Fixed Formatting) ---
           _textField(
-            "Student ID (Numbers Only)",
+            "Student ID",
             _idController,
-            hint: "2026-000000",
-            prefix: "PDM-",
+            hint: "2024123456", // 10 digits typed
+            prefix: "PDM-", // Prefix hardcoded
             isNumeric: true,
-            maxLength: 11,
+            maxLength: 10, // Limits to exactly 10 digits
           ),
-          _textField("Email", _emailController, hint: "example@gmal.com"),
+
+          _textField("Email", _emailController, hint: "example@gmail.com"),
+
           _textField(
             "Parent Contact",
             _parentController,
-            hint: "639XXXXXXXXX",
+            hint: "12345678", // 8 digits typed
+            prefix: "639", // Prefix hardcoded
             isNumeric: true,
-            maxLength: 12,
+            maxLength: 8, // 3 prefix + 8 typed = 11 digits total
           ),
 
-          // Password
+          // --- PASSWORD ---
           Padding(
             padding: const EdgeInsets.only(bottom: 25),
             child: TextField(
@@ -199,7 +308,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
 
-          // CONTINUE BUTTON
+          // --- CONTINUE BUTTON ---
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: _yellow,
@@ -209,7 +318,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ),
             onPressed: () {
-              // ONLY go to next page if validation is true
               if (_validateStep1()) {
                 _pageController.nextPage(
                   duration: const Duration(milliseconds: 300),
@@ -231,7 +339,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // REUSABLE UI HELPERS
+  // REUSABLE UI HELPERS (Unchanged from your original design!)
   Widget _textField(
     String label,
     TextEditingController controller, {
@@ -249,9 +357,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ? [FilteringTextInputFormatter.digitsOnly]
             : null,
         maxLength: maxLength,
-        decoration: _inputDecoration(
-          label,
-        ).copyWith(hintText: hint, prefixText: prefix, counterText: ""),
+        decoration: _inputDecoration(label).copyWith(
+          hintText: hint,
+          prefixText: prefix,
+          counterText: "", // Hides the 0/10 character counter text
+        ),
       ),
     );
   }

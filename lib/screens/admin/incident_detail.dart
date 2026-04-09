@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 class AdminIncidentDetailScreen extends StatefulWidget {
-  final String docId; // This tells the screen EXACTLY which report to load
+  final String docId;
 
   const AdminIncidentDetailScreen({super.key, required this.docId});
 
@@ -17,7 +17,6 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
   final Color _bgColor = const Color(0xFFF9F7F2);
   final Color _cardColor = const Color(0xFFE5DCD3);
 
-  // Reusing your update logic so they can approve/decline right here!
   Future<void> _updateStatus(String newStatus) async {
     try {
       await FirebaseFirestore.instance
@@ -31,7 +30,7 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Report $newStatus successfully")));
-      // If resolved or declined, you might want to automatically pop the screen
+
       if (newStatus == 'resolved' || newStatus == 'declined') {
         Navigator.pop(context);
       }
@@ -53,7 +52,6 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
         elevation: 0,
         foregroundColor: _darkBrown,
       ),
-      // We use a StreamBuilder so if the status changes, the UI updates instantly
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
             .collection('violations')
@@ -111,8 +109,9 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
                   ),
                   const Divider(height: 40),
 
-                  _infoRow("REPORTED BY:", data['studentName'] ?? "Unknown"),
-                  _infoRow("STUDENT ID:", data['studentID'] ?? "N/A"),
+                  // --- CORRECTED DATA KEYS ---
+                  _infoRow("REPORTED BY:", data['reporterName'] ?? "Unknown"),
+                  _infoRow("STUDENT ID:", data['reporterID'] ?? "N/A"),
                   _infoRow("VIOLATION TYPE:", data['type'] ?? "Other"),
                   _infoRow("DATE & TIME:", dateStr),
 
@@ -139,7 +138,7 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
                     ),
                   ),
 
-                  // ACTION BUTTONS
+                  // --- ACTION BUTTONS LOGIC ---
                   if (status == 'pending')
                     Row(
                       children: [
@@ -175,7 +174,7 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ) // <-- Removed comma here
+                    )
                   else if (status == 'declined')
                     const Center(
                       child: Text(
@@ -185,7 +184,7 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ), // <-- Comma goes here at the very end!
+                    ),
                 ],
               ),
             ),
@@ -227,8 +226,8 @@ class _AdminIncidentDetailScreenState extends State<AdminIncidentDetailScreen> {
     Color color = status == 'pending'
         ? Colors.amber
         : (status == 'approved'
-              ? Colors.green
-              : (status == 'declined' ? Colors.red : Colors.brown));
+              ? Colors.blue
+              : (status == 'declined' ? Colors.red : Colors.green));
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
