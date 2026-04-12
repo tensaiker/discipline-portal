@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:discipline/model/student_model.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../../verification_service.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  final Map<String, dynamic>? autoFillData; // <--- Needs this line!
+  const RegisterScreen({super.key, this.autoFillData}); // <--- And this!
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -13,163 +17,168 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final PageController _pageController = PageController();
+  final _service = VerificationService();
 
-  // Controllers (Updated for new Name format)
+  // Controllers (Auto-filled by ID Scan)
   final _firstNameController = TextEditingController();
-  final _middleNameController = TextEditingController();
+  final _middleNameController = TextEditingController(); // ✅ Added
   final _lastNameController = TextEditingController();
-  final _suffixController = TextEditingController();
-
+  final _suffixController = TextEditingController(); // ✅ Added
   final _idController = TextEditingController();
-  final _emailController = TextEditingController();
   final _parentController = TextEditingController();
+
+  // Student Provided Controllers
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
   // State Variables
   String? _selectedCourse;
-  String? _selectedSex; // New Sex Dropdown Variable
+  String? _selectedSex;
+  String? _idCardUrl;
   bool _isPasswordVisible = false;
+  File? _selectedIdPhoto;
+  bool _isVerifying = false;
+  bool _isRegistering = false;
 
-  final List<String> _courses = [
-    "BS Information Technology",
-    "BS Computer Science",
-    "BCED",
-  ];
-
+  // Design Colors
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _yellow = const Color(0xFFFFC107);
+  final Color _creamyWhite = const Color(0xFFF9F7F2);
 
-  // ==========================================
-  // VALIDATION LOGIC
-  // ==========================================
-  bool _validateStep1() {
-    // 1. Name Check (First & Last are required)
-    if (_firstNameController.text.trim().isEmpty) {
-      _showValidationError("First Name");
-      return false;
+  @override
+  void initState() {
+    super.initState();
+    // ✅ AUTO-FILL LOGIC: Runs on startup if data was passed
+    if (widget.autoFillData != null) {
+      _fillFormWithData(widget.autoFillData!);
     }
-    if (_lastNameController.text.trim().isEmpty) {
-      _showValidationError("Last Name");
-      return false;
-    }
-    // 2. Sex Check
-    if (_selectedSex == null) {
-      _showValidationError("Sex");
-      return false;
-    }
-    // 3. Course Check
-    if (_selectedCourse == null) {
-      _showValidationError("Course");
-      return false;
-    }
-    // 4. Student ID Check (Expecting exactly 10 digits to match PDM-XXXX-XXXXXX)
-    if (_idController.text.length != 10) {
-      _showValidationError("Student ID (Must be 10 digits)");
-      return false;
-    }
-    // 5. Email Check
-    if (!_emailController.text.contains('@') ||
-        !_emailController.text.contains('.')) {
-      _showValidationError("Email");
-      return false;
-    }
-    // 6. Parent Contact Check (Expecting exactly 8 digits to match 639XXXXXXXX)
-    if (_parentController.text.length != 8) {
-      _showValidationError("Parent Contact (Must be 8 numbers)");
-      return false;
-    }
-    // 7. Password Check
-    if (_passwordController.text.length < 6) {
-      _showValidationError("Password (Min 6 characters)");
-      return false;
-    }
-
-    return true; // All fields are correct!
   }
 
-  void _showValidationError(String fieldName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Please input the $fieldName correctly."),
-        backgroundColor: Colors.red[800],
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  void _fillFormWithData(Map<String, dynamic> data) {
+    setState(() {
+      _firstNameController.text = data['firstName'] ?? '';
+      _middleNameController.text =
+          data['middleName'] ?? ''; // ✅ Handles Middle Name
+      _lastNameController.text = data['lastName'] ?? '';
+      _suffixController.text =
+          data['suffix'] ?? ''; // ✅ Handles Suffix (Jr, III, etc.)
+
+      String rawID = data['studentID'] ?? '';
+      _idController.text = rawID.replaceAll("PDM-", "").replaceAll("-", "");
+
+      _selectedSex = data['sex'];
+      _selectedCourse = data['course'];
+
+      String rawParent = (data['parentContact'] ?? '').toString();
+      _parentController.text = rawParent.replaceFirst("639", "");
+
+      _idCardUrl = data['idCardUrl'];
+    });
   }
 
-  // ==========================================
-  // FIREBASE REGISTRATION
-  // ==========================================
-  Future<void> _handleRegister() async {
+  // LOGIC: ID SCAN & AUTO-FILL
+  Future<void> _handleIDScan() async {
+    if (_selectedIdPhoto == null) return;
+    setState(() => _isVerifying = true);
     try {
-      // 1. Combine Name
-      String fName = _firstNameController.text.trim();
-      String mName = _middleNameController.text.trim();
-      String lName = _lastNameController.text.trim();
-      String suffix = _suffixController.text.trim();
+      final data = await _service.fetchMasterData(imageFile: _selectedIdPhoto!);
+      if (data != null) {
+        _fillFormWithData(data);
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.ease,
+        );
+      } else {
+        _showSnackBar(
+          "ID not found in Master List or already taken.",
+          Colors.red,
+        );
+      }
+    } catch (e) {
+      _showSnackBar("Scan Error: $e", Colors.red);
+    } finally {
+      setState(() => _isVerifying = false);
+    }
+  }
 
-      String combinedFullName =
-          "$fName ${mName.isNotEmpty ? '$mName ' : ''}$lName${suffix.isNotEmpty ? ' $suffix' : ''}"
-              .trim();
+  // LOGIC: FINAL SUBMISSION
+  Future<void> _handleFinalRegister() async {
+    if (_emailController.text.isEmpty || _passwordController.text.length < 6) {
+      _showSnackBar("Please check your email and password.", Colors.orange);
+      return;
+    }
 
-      // 2. Format ID and Phone
-      // Grabs the 10 digits and forces the hyphen: PDM-XXXX-XXXXXX
-      String idString = _idController.text.trim();
-      String formattedId =
-          "PDM-${idString.substring(0, 4)}-${idString.substring(4)}";
-
-      // Combines the fixed 639 with the 8 typed digits
-      String formattedParent = "639${_parentController.text.trim()}";
-
-      // 3. Auth Creation
+    setState(() => _isRegistering = true);
+    try {
       UserCredential cred = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
             email: _emailController.text.trim(),
             password: _passwordController.text.trim(),
           );
 
-      // 4. Save to Database
-      StudentModel student = StudentModel(
-        uid: cred.user!.uid,
-        fullName: combinedFullName,
-        course: _selectedCourse!,
-        studentID: formattedId,
-        email: _emailController.text.trim(),
-        parentContact: formattedParent,
-      );
+      String rawIdInput = _idController.text.trim();
+      String formattedID =
+          "PDM-${rawIdInput.substring(0, 4)}-${rawIdInput.substring(4)}";
 
-      // We add the specific fields to the map so your Admin app has clean data
-      Map<String, dynamic> studentData = student.toMap();
-      studentData['firstName'] = fName;
-      studentData['middleName'] = mName;
-      studentData['lastName'] = lName;
-      studentData['suffix'] = suffix;
-      studentData['sex'] = _selectedSex;
-      studentData['role'] = 'student';
-      studentData['status'] =
-          'pending'; // Ensure they go to your Admin pending tab!
-      studentData['isApproved'] = false;
+      // ✅ SMART NAME BUILDER: First Middle Last Suffix
+      String fName = _firstNameController.text.trim();
+      String mName = _middleNameController.text.trim();
+      String lName = _lastNameController.text.trim();
+      String sfx = _suffixController.text.trim();
+
+      String combinedFullName =
+          "$fName ${mName.isNotEmpty ? '$mName ' : ''}$lName${sfx.isNotEmpty ? ' $sfx' : ''}"
+              .toUpperCase()
+              .trim();
 
       await FirebaseFirestore.instance
           .collection('users')
           .doc(cred.user!.uid)
-          .set(studentData);
+          .set({
+            'uid': cred.user!.uid,
+            'firstName': fName.toUpperCase(),
+            'middleName': mName.toUpperCase(),
+            'lastName': lName.toUpperCase(),
+            'suffix': sfx.toUpperCase(),
+            'fullName': combinedFullName,
+            'studentID': formattedID,
+            'email': _emailController.text.trim(),
+            'parentContact': "639${_parentController.text.trim()}",
+            'course': _selectedCourse,
+            'sex': _selectedSex,
+            'idCardUrl': _idCardUrl,
+            'role': 'student',
+            'status': 'Pending',
+            'isActive': false,
+            'isApproved': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
 
       _pageController.nextPage(
         duration: const Duration(milliseconds: 300),
         curve: Curves.ease,
       );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+      _showSnackBar("Registration Error: $e", Colors.red);
+    } finally {
+      setState(() => _isRegistering = false);
     }
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9F7F2),
+      backgroundColor: _creamyWhite,
       body: PageView(
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
@@ -178,26 +187,128 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // STEP 1: ID SCAN UI
   Widget _buildStep1() {
+    bool hasFile = _selectedIdPhoto != null;
+    return Padding(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        children: [
+          const SizedBox(height: 50),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back_ios, size: 20),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+          _stepIndicator(1),
+          const SizedBox(height: 30),
+          Text(
+            "Verify Identity",
+            style: GoogleFonts.poppins(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Text(
+            "Scan your PDM ID to unlock the form.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 40),
+          Expanded(
+            child: GestureDetector(
+              onTap: () async {
+                final picker = ImagePicker();
+                final XFile? image = await picker.pickImage(
+                  source: ImageSource.gallery,
+                  imageQuality: 70,
+                );
+                if (image != null)
+                  setState(() => _selectedIdPhoto = File(image.path));
+              },
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(color: Colors.black12),
+                ),
+                child: hasFile
+                    ? _buildFilePreview()
+                    : _buildUploadPlaceholder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 30),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: hasFile ? _darkBrown : Colors.grey,
+              minimumSize: const Size(double.infinity, 55),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+            ),
+            onPressed: hasFile && !_isVerifying ? _handleIDScan : null,
+            child: _isVerifying
+                ? const CircularProgressIndicator(color: Colors.white)
+                : const Text(
+                    "Scan & Continue",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // STEP 2: AUTO-FILLED FORM UI
+  Widget _buildStep2() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
           const SizedBox(height: 50),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_ios, size: 20),
+                onPressed: () => _pageController.previousPage(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.ease,
+                ),
+              ),
+              _stepIndicator(2),
+              const SizedBox(width: 40),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "Complete Registration",
+            style: GoogleFonts.poppins(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const Text(
-            "Create Account",
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            "Verify your official details below.",
+            style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 30),
 
-          // --- ROW 1: First & Middle Name ---
+          // NAME FIELDS
           Row(
             children: [
               Expanded(
                 child: _textField(
                   "First Name",
                   _firstNameController,
-                  hint: "Juan",
+                  readOnly: true,
                 ),
               ),
               const SizedBox(width: 10),
@@ -205,13 +316,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: _textField(
                   "Middle Name",
                   _middleNameController,
-                  hint: "Dela (Opt)",
+                  readOnly: true,
                 ),
               ),
             ],
           ),
-
-          // --- ROW 2: Last Name & Suffix ---
           Row(
             children: [
               Expanded(
@@ -219,96 +328,67 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: _textField(
                   "Last Name",
                   _lastNameController,
-                  hint: "Cruz",
+                  readOnly: true,
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 flex: 1,
-                child: _textField("Suffix", _suffixController, hint: "Jr."),
+                child: _textField(
+                  "Suffix",
+                  _suffixController,
+                  hint: "None",
+                  readOnly: true,
+                ),
               ),
             ],
           ),
 
-          // --- SEX DROPDOWN ---
-          Padding(
-            padding: const EdgeInsets.only(bottom: 15),
-            child: DropdownButtonFormField<String>(
-              value: _selectedSex,
-              decoration: _inputDecoration("Sex"),
-              items: ["Male", "Female"]
-                  .map(
-                    (s) => DropdownMenuItem(
-                      value: s,
-                      child: Text(s, style: const TextStyle(fontSize: 14)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (val) => setState(() => _selectedSex = val),
-            ),
-          ),
-
-          // --- COURSE DROPDOWN ---
-          Padding(
-            padding: const EdgeInsets.only(bottom: 15),
-            child: DropdownButtonFormField<String>(
-              value: _selectedCourse,
-              decoration: _inputDecoration("Course"),
-              items: _courses
-                  .map(
-                    (c) => DropdownMenuItem(
-                      value: c,
-                      child: Text(c, style: const TextStyle(fontSize: 14)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (val) => setState(() => _selectedCourse = val),
-            ),
-          ),
-
-          // --- ID & CONTACT FIELDS (With Fixed Formatting) ---
           _textField(
             "Student ID",
             _idController,
-            hint: "2024123456", // 10 digits typed
-            prefix: "PDM-", // Prefix hardcoded
-            isNumeric: true,
-            maxLength: 10, // Limits to exactly 10 digits
+            prefix: "PDM-",
+            readOnly: true,
           ),
-
-          _textField("Email", _emailController, hint: "example@gmail.com"),
-
+          _textField(
+            "Course",
+            TextEditingController(text: _selectedCourse),
+            readOnly: true,
+          ),
+          _textField(
+            "Sex",
+            TextEditingController(text: _selectedSex),
+            readOnly: true,
+          ),
           _textField(
             "Parent Contact",
             _parentController,
-            hint: "12345678", // 8 digits typed
-            prefix: "639", // Prefix hardcoded
-            isNumeric: true,
-            maxLength: 8, // 3 prefix + 8 typed = 11 digits total
+            prefix: "639",
+            readOnly: true,
           ),
 
-          // --- PASSWORD ---
-          Padding(
-            padding: const EdgeInsets.only(bottom: 25),
-            child: TextField(
-              controller: _passwordController,
-              obscureText: !_isPasswordVisible,
-              decoration: _inputDecoration("Password").copyWith(
-                hintText: "Min. 6 characters",
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _isPasswordVisible
-                        ? Icons.visibility
-                        : Icons.visibility_off,
-                  ),
-                  onPressed: () =>
-                      setState(() => _isPasswordVisible = !_isPasswordVisible),
+          const Divider(height: 40),
+
+          _textField(
+            "Email Address",
+            _emailController,
+            hint: "example@gmail.com",
+          ),
+          TextField(
+            controller: _passwordController,
+            obscureText: !_isPasswordVisible,
+            decoration: _inputDecoration("Set Password").copyWith(
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
                 ),
+                onPressed: () =>
+                    setState(() => _isPasswordVisible = !_isPasswordVisible),
               ),
             ),
           ),
 
-          // --- CONTINUE BUTTON ---
+          const SizedBox(height: 30),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: _yellow,
@@ -317,21 +397,60 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(30),
               ),
             ),
-            onPressed: () {
-              if (_validateStep1()) {
-                _pageController.nextPage(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.ease,
-                );
-              }
-            },
-            child: const Text(
-              "Continue",
-              style: TextStyle(
-                color: Colors.black,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+            onPressed: _isRegistering ? null : _handleFinalRegister,
+            child: _isRegistering
+                ? const CircularProgressIndicator(color: Colors.black)
+                : const Text(
+                    "Submit Registration",
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // STEP 3: SUCCESS UI
+  Widget _buildStep3() {
+    return Padding(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.hourglass_top_rounded,
+            color: Colors.orange,
+            size: 80,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "Registration Pending",
+            style: GoogleFonts.poppins(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Text(
+            "Your ID matched our records! Please wait for approval.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 40),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _darkBrown,
+              minimumSize: const Size(200, 50),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
               ),
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              "Return to Login",
+              style: TextStyle(color: Colors.white),
             ),
           ),
         ],
@@ -339,56 +458,70 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // REUSABLE UI HELPERS (Unchanged from your original design!)
+  // HELPERS
+  Widget _buildFilePreview() => Column(
+    children: [
+      const Icon(Icons.check_circle, color: Colors.green, size: 40),
+      const Text(
+        "ID Selected",
+        style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+      ),
+      TextButton(
+        onPressed: () => setState(() => _selectedIdPhoto = null),
+        child: const Text("Retake", style: TextStyle(color: Colors.red)),
+      ),
+    ],
+  );
+  Widget _buildUploadPlaceholder() => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Icon(Icons.camera_alt_outlined, color: Colors.amber.shade900, size: 40),
+      const Text(
+        "Capture PDM ID",
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+    ],
+  );
+  Widget _stepIndicator(int currentStep) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: List.generate(
+      3,
+      (i) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          color: i < currentStep ? _yellow : Colors.grey.shade300,
+          shape: BoxShape.circle,
+        ),
+      ),
+    ),
+  );
   Widget _textField(
     String label,
     TextEditingController controller, {
-    String? hint,
     String? prefix,
-    bool isNumeric = false,
-    int? maxLength,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: TextField(
-        controller: controller,
-        keyboardType: isNumeric ? TextInputType.number : TextInputType.text,
-        inputFormatters: isNumeric
-            ? [FilteringTextInputFormatter.digitsOnly]
-            : null,
-        maxLength: maxLength,
-        decoration: _inputDecoration(label).copyWith(
-          hintText: hint,
-          prefixText: prefix,
-          counterText: "", // Hides the 0/10 character counter text
-        ),
+    String? hint,
+    bool readOnly = false,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 15),
+    child: TextField(
+      controller: controller,
+      readOnly: readOnly,
+      decoration: _inputDecoration(label).copyWith(
+        prefixText: prefix,
+        hintText: hint,
+        fillColor: readOnly ? Colors.grey.shade100 : Colors.white,
       ),
-    );
-  }
-
-  InputDecoration _inputDecoration(String label) {
-    return InputDecoration(
-      labelText: label,
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.grey),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.grey),
-      ),
-    );
-  }
-
-  // Placeholder Step 2 & 3
-  Widget _buildStep2() => Center(
-    child: ElevatedButton(
-      onPressed: _handleRegister,
-      child: const Text("Submit"),
     ),
   );
-  Widget _buildStep3() => const Center(child: Text("Verification Pending"));
+  InputDecoration _inputDecoration(String label) => InputDecoration(
+    labelText: label,
+    filled: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Colors.grey),
+    ),
+  );
 }

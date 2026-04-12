@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:async'; // Required for Timer
+import 'dart:async';
 import 'register_screen.dart';
 import 'forgot_password.dart';
 
@@ -13,13 +13,12 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // Using this controller for both Email or Student ID
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isPasswordVisible = false;
 
-  // LOCKOUT LOGIC VARIABLES
+  // LOCKOUT LOGIC
   int _failedAttempts = 0;
   bool _isLockedOut = false;
   int _secondsRemaining = 0;
@@ -35,15 +34,17 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        if (_secondsRemaining > 0) {
-          _secondsRemaining--;
-        } else {
-          _isLockedOut = false;
-          _failedAttempts = 0;
-          timer.cancel();
-        }
-      });
+      if (mounted) {
+        setState(() {
+          if (_secondsRemaining > 0) {
+            _secondsRemaining--;
+          } else {
+            _isLockedOut = false;
+            _failedAttempts = 0;
+            timer.cancel();
+          }
+        });
+      }
     });
   }
 
@@ -56,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================
-  // UPDATED LOGIN LOGIC (ID LOOKUP)
+  // UPDATED LOGIN LOGIC (THE GATEKEEPER)
   // ==========================================
   Future<void> loginUser() async {
     if (_isLockedOut) return;
@@ -74,11 +75,10 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       String emailToSignIn = "";
 
-      // 1. Check if input is an email or an ID
+      // 1. ID LOOKUP: Check if input is email or ID
       if (input.contains('@')) {
         emailToSignIn = input;
       } else {
-        // 2. ID LOOKUP: Search Firestore for the studentID
         var userQuery = await FirebaseFirestore.instance
             .collection('users')
             .where('studentID', isEqualTo: input)
@@ -88,37 +88,51 @@ class _LoginScreenState extends State<LoginScreen> {
         if (userQuery.docs.isEmpty) {
           throw FirebaseAuthException(
             code: 'user-not-found',
-            message: 'Student ID not found.',
+            message: 'ID not found.',
           );
         }
         emailToSignIn = userQuery.docs.first.get('email');
       }
 
-      // 3. ACTUAL FIREBASE SIGN IN
+      // 2. FIREBASE SIGN IN
       UserCredential userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: emailToSignIn, password: password);
 
-      // 4. FETCH USER ROLE FOR ROUTING
+      // 3. FETCH USER DATA FOR GATEKEEPING
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
           .get();
 
       if (userDoc.exists) {
-        String role = userDoc.get('role');
-        _failedAttempts = 0;
+        String role = userDoc.get('role') ?? 'student';
 
         if (role == 'admin') {
+          // Admins bypass gatekeeping
+          _failedAttempts = 0;
           if (!mounted) return;
           Navigator.pushReplacementNamed(context, '/admin_home');
-        } else if (role == 'student') {
-          bool isApproved = userDoc.get('isApproved') ?? false;
-          if (isApproved) {
+        } else {
+          // STUDENT GATEKEEPING LOGIC
+          bool isActive = userDoc.get('isActive') ?? false;
+          String status = userDoc.get('status') ?? '';
+
+          if (isActive) {
+            // ✅ SUCCESS: Student is active and cleared
+            _failedAttempts = 0;
             if (!mounted) return;
             Navigator.pushReplacementNamed(context, '/student_home');
           } else {
+            // ❌ BLOCKED: Handle different inactive states
             await FirebaseAuth.instance.signOut();
-            _showError("Your account is pending admin approval.");
+
+            if (status == 'Pending') {
+              _showError("Account Pending: Waiting for admin approval.");
+            } else if (status == 'deactivated') {
+              _showError("Account Deactivated: Please contact the PDM admin.");
+            } else {
+              _showError("Access Denied: Your account is currently disabled.");
+            }
           }
         }
       }
@@ -137,7 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       });
     } catch (e) {
-      _showError("An error occurred. Please try again.");
+      _showError("System Error: Please try again later.");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -145,7 +159,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red[800]),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Colors.red[800],
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -187,7 +205,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 50),
 
-              // 1. STUDENT ID FIELD
               _buildInputLabel("Student ID / Email"),
               TextField(
                 controller: _identifierController,
@@ -195,14 +212,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 decoration: _inputDecoration("e.g. PDM-2024-000001"),
               ),
 
-              // 2. TIMER MESSAGE
               if (_isLockedOut)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8.0),
                     child: Text(
-                      "Too many failed attempts. Try again in $_secondsRemaining seconds.",
+                      "Locked out. Try again in $_secondsRemaining seconds.",
                       style: const TextStyle(
                         color: Colors.red,
                         fontSize: 12,
@@ -214,7 +230,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 20),
 
-              // 3. PASSWORD FIELD
               _buildInputLabel("Password"),
               TextField(
                 controller: _passwordController,
@@ -243,15 +258,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: TextButton(
                   onPressed: _isLockedOut
                       ? null
-                      : () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  const ForgotPasswordScreen(),
-                            ),
-                          );
-                        },
+                      : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ForgotPasswordScreen(),
+                          ),
+                        ),
                   child: Text(
                     "Forgot Password?",
                     style: TextStyle(
@@ -264,7 +276,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 20),
 
-              // 4. SIGN IN BUTTON
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -273,7 +284,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     backgroundColor: _isLockedOut
                         ? Colors.grey.shade400
                         : _darkBrown,
-                    disabledBackgroundColor: Colors.grey.shade400,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -304,14 +314,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   GestureDetector(
                     onTap: _isLockedOut
                         ? null
-                        : () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const RegisterScreen(),
-                              ),
-                            );
-                          },
+                        : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const RegisterScreen(),
+                            ),
+                          ),
                     child: Text(
                       "Create Account",
                       style: TextStyle(
@@ -349,7 +357,6 @@ class _LoginScreenState extends State<LoginScreen> {
       filled: true,
       fillColor: _isLockedOut ? const Color(0xFFFFF5F5) : Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-
       disabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
         borderSide: BorderSide(

@@ -27,12 +27,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
 
     try {
-      // Sends the free reset link from Firebase
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
 
       if (!mounted) return;
 
-      // Show a success dialog telling them to leave the app and check email
       _showSuccessDialog();
     } on FirebaseAuthException catch (e) {
       _showSnackBar(e.message ?? "An error occurred", isError: true);
@@ -93,31 +91,32 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            const SizedBox(height: 20),
-            Image.asset('assets/images/brain_char.png', height: 150),
-            const SizedBox(height: 20),
+            // Image removed here
+            const SizedBox(height: 60), // Increased spacing for a cleaner look
             Text(
               "Forgot Password?",
               style: GoogleFonts.poppins(
-                fontSize: 22,
+                fontSize: 24,
                 fontWeight: FontWeight.bold,
                 color: Colors.brown,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 15),
             const Text(
               "Write your email below. We will send you a secure link to reset your password.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: Colors.grey, fontSize: 14),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 40),
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: "Email",
-                prefixIcon: Icon(Icons.email_outlined),
-                border: OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.email_outlined),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
             const SizedBox(height: 30),
@@ -135,6 +134,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
+                  fontSize: 16,
                 ),
               ),
             ),
@@ -143,7 +143,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               onPressed: () => Navigator.pop(context),
               child: const Text(
                 "Return to log-in",
-                style: TextStyle(color: Colors.blue),
+                style: TextStyle(
+                  color: Colors.blue,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
           ],

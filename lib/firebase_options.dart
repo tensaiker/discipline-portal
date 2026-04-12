@@ -33,10 +33,7 @@ class DefaultFirebaseOptions {
           'you can reconfigure this by running the FlutterFire CLI again.',
         );
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -50,20 +47,29 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyA5vv4kxsoAuKA_YwTiYBLywMr-uiO5jkU',
-    appId: '1:388475199811:web:de6d4cbe5b5fdc39ec8ff6',
-    messagingSenderId: '388475199811',
-    projectId: 'arphis-backend',
-    authDomain: 'arphis-backend.firebaseapp.com',
-    storageBucket: 'arphis-backend.firebasestorage.app',
+    apiKey: 'AIzaSyCFQOfzabTz96i4h0lS-JipBdt44C_sO-o',
+    appId: '1:637913467588:web:c7cc725326b6cc33f35791',
+    messagingSenderId: '637913467588',
+    projectId: 'disciplineportal',
+    authDomain: 'disciplineportal.firebaseapp.com',
+    storageBucket: 'disciplineportal.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAj8zyMmzqrZwjJ3PlUB1i2qQeYdj6P8vA',
-    appId: '1:388475199811:android:9f6ec4274674714dec8ff6',
-    messagingSenderId: '388475199811',
-    projectId: 'arphis-backend',
-    storageBucket: 'arphis-backend.firebasestorage.app',
+    apiKey: 'AIzaSyAiofcWsE2unU_Iw59lYT9K82y2nQ9huz8',
+    appId: '1:637913467588:android:ef26e500039881b4f35791',
+    messagingSenderId: '637913467588',
+    projectId: 'disciplineportal',
+    storageBucket: 'disciplineportal.firebasestorage.app',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyCFQOfzabTz96i4h0lS-JipBdt44C_sO-o',
+    appId: '1:637913467588:web:8bb954bd225f7ef1f35791',
+    messagingSenderId: '637913467588',
+    projectId: 'disciplineportal',
+    authDomain: 'disciplineportal.firebaseapp.com',
+    storageBucket: 'disciplineportal.firebasestorage.app',
   );
 
 }

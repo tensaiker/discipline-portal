@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'student_home.dart';
 import 'alerts.dart';
 import 'report_incident.dart';
+import 'handbook.dart';
 
 class StudentMainWrapper extends StatefulWidget {
   const StudentMainWrapper({super.key});
@@ -20,7 +21,7 @@ class _StudentMainWrapperState extends State<StudentMainWrapper> {
     // REMOVED 'const' from StudentAlerts and ReportIncident to support dynamic data
     final List<Widget> screens = [
       const StudentHome(),
-      _buildHandbookTab(),
+      const StudentHandbook(),
       const StudentAlerts(), // Real-time Firestore stream
       const ReportIncident(), // Dynamic form submission
     ];
@@ -62,16 +63,6 @@ class _StudentMainWrapperState extends State<StudentMainWrapper> {
             label: 'Report',
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildHandbookTab() {
-    return const Center(
-      child: Text(
-        "Handbook Screen\n(Coming Soon)",
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
       ),
     );
   }

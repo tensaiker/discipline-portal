@@ -12,7 +12,7 @@ class ViolationManagement extends StatefulWidget {
 
 class _ViolationManagementState extends State<ViolationManagement> {
   int _view = 0; // 0 = List View, 1 = Add Form
-  String _activeTab = "All Students";
+  String _activeTab = "All Students"; // ✅ Default changed to All Students
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
 
@@ -34,8 +34,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
 
   // LOGIC: Auto-fill Student Info when ID is typed
   Future<void> _searchAndFill(String id) async {
-    // Search when the ID reaches the standard length (e.g., PDM-2023-000000)
-    if (id.length < 15) return;
+    if (id.length < 10) return;
 
     var res = await FirebaseFirestore.instance
         .collection('users')
@@ -46,16 +45,12 @@ class _ViolationManagementState extends State<ViolationManagement> {
     if (res.docs.isNotEmpty) {
       var d = res.docs.first.data();
       setState(() {
-        // Auto-fill visible fields
         _nameController.text = d['fullName'] ?? '';
-        _courseController.text = d['course'] ?? ''; // AUTO-FILL COURSE
-
-        // Save background data for saving
+        _courseController.text = d['course'] ?? '';
         _targetStudentUid = d['uid'];
         _gender = d['sex'];
       });
     } else {
-      // Clear if not found
       setState(() {
         _nameController.clear();
         _courseController.clear();
@@ -65,7 +60,6 @@ class _ViolationManagementState extends State<ViolationManagement> {
     }
   }
 
-  // LOGIC: Save Violation (Updates both Admin and Student Dashboards)
   Future<void> _saveViolation() async {
     if (_idController.text.isEmpty ||
         _selectedViolation == null ||
@@ -77,12 +71,11 @@ class _ViolationManagementState extends State<ViolationManagement> {
     }
 
     try {
-      // 1. Save to 'violations' collection
       await FirebaseFirestore.instance.collection('violations').add({
         'studentUid': _targetStudentUid,
         'studentID': _idController.text.trim(),
         'studentName': _nameController.text,
-        'course': _courseController.text, // SAVING THE COURSE
+        'course': _courseController.text,
         'gender': _gender ?? "N/A",
         'type': _selectedViolation,
         'description': _descController.text.trim(),
@@ -92,7 +85,6 @@ class _ViolationManagementState extends State<ViolationManagement> {
         'reporterUid': 'ADMIN_LOG',
       });
 
-      // 2. Update student status in 'users' collection
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_targetStudentUid)
@@ -101,13 +93,10 @@ class _ViolationManagementState extends State<ViolationManagement> {
             'activeViolation': _selectedViolation,
           });
 
-      _showSuccessSnackBar("Violation logged and student notified!");
+      _showSuccessSnackBar("Violation logged successfully!");
       _resetForm();
     } catch (e) {
       print("Error saving violation: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-      );
     }
   }
 
@@ -138,9 +127,6 @@ class _ViolationManagementState extends State<ViolationManagement> {
     );
   }
 
-  // ==========================================
-  // VIEW 1: THE VIOLATION LIST
-  // ==========================================
   Widget _buildListView() {
     return Column(
       children: [
@@ -162,7 +148,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
                     onChanged: (v) =>
                         setState(() => _searchQuery = v.toLowerCase()),
                     decoration: const InputDecoration(
-                      hintText: "Search",
+                      hintText: "Search students...",
                       prefixIcon: Icon(Icons.search),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(vertical: 15),
@@ -196,11 +182,11 @@ class _ViolationManagementState extends State<ViolationManagement> {
             ],
           ),
         ),
-
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
+            // ✅ "Pending Verification" removed from this list
             children: ["All Students", "With Violations", "Clear Students"].map(
               (tab) {
                 bool isActive = _activeTab == tab;
@@ -230,9 +216,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
             ).toList(),
           ),
         ),
-
         const SizedBox(height: 15),
-
         Expanded(
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
@@ -258,18 +242,36 @@ class _ViolationManagementState extends State<ViolationManagement> {
                         return const Center(child: CircularProgressIndicator());
 
                       var docs = snapshot.data!.docs.where((doc) {
-                        var name = (doc['fullName'] ?? '')
+                        var data = doc.data() as Map<String, dynamic>;
+
+                        // ✅ CRITICAL LOGIC: Only show students who finished ID verification
+                        bool isVerified = data['isActive'] ?? false;
+                        if (!isVerified) return false;
+
+                        var name = (data['fullName'] ?? '')
                             .toString()
                             .toLowerCase();
-                        var status = doc['status'] ?? 'cleared';
+                        var status = data['status'] ?? 'cleared';
+
                         bool matchesSearch = name.contains(_searchQuery);
                         bool matchesTab = true;
+
                         if (_activeTab == "With Violations")
                           matchesTab = status == "violations";
                         if (_activeTab == "Clear Students")
                           matchesTab = status == "cleared";
+
                         return matchesSearch && matchesTab;
                       }).toList();
+
+                      if (docs.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            "No students found in this category.",
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        );
+                      }
 
                       return ListView.builder(
                         itemCount: docs.length,
@@ -320,7 +322,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
 
   Widget _buildStudentRow(DocumentSnapshot doc) {
     var data = doc.data() as Map<String, dynamic>;
-    bool hasViolation = data['status'] == 'violations';
+    var status = data['status'] ?? 'cleared';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
@@ -355,7 +357,9 @@ class _ViolationManagementState extends State<ViolationManagement> {
           Expanded(
             flex: 2,
             child: Text(
-              hasViolation ? (data['activeViolation'] ?? 'Active') : 'None',
+              status == 'violations'
+                  ? (data['activeViolation'] ?? 'Active')
+                  : 'None',
               style: const TextStyle(fontSize: 12),
             ),
           ),
@@ -363,30 +367,7 @@ class _ViolationManagementState extends State<ViolationManagement> {
             flex: 1,
             child: Align(
               alignment: Alignment.centerRight,
-              child: hasViolation
-                  ? ElevatedButton(
-                      onPressed: () => doc.reference.update({
-                        'status': 'cleared',
-                        'activeViolation': FieldValue.delete(),
-                      }),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8DBB52),
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                      ),
-                      child: const Text(
-                        "Clear",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    )
-                  : const SizedBox(),
+              child: _buildActionButtons(doc, status),
             ),
           ),
         ],
@@ -394,9 +375,32 @@ class _ViolationManagementState extends State<ViolationManagement> {
     );
   }
 
-  // ==========================================
-  // VIEW 2: LOG NEW VIOLATION (UPDATED WITH COURSE FIELD)
-  // ==========================================
+  Widget _buildActionButtons(DocumentSnapshot doc, String status) {
+    if (status == 'violations') {
+      return ElevatedButton(
+        onPressed: () => doc.reference.update({
+          'status': 'cleared',
+          'activeViolation': FieldValue.delete(),
+        }),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF8DBB52),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+        ),
+        child: const Text(
+          "Clear",
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+    return const SizedBox();
+  }
+
   Widget _buildFormView() {
     return Center(
       child: SingleChildScrollView(
@@ -427,29 +431,24 @@ class _ViolationManagementState extends State<ViolationManagement> {
                 ],
               ),
               const SizedBox(height: 20),
-
               _label("Student ID"),
               TextField(
                 controller: _idController,
                 onChanged: _searchAndFill,
                 decoration: _inputDeco("Type ID (e.g. PDM-2023-000000)"),
               ),
-
               _label("Student Name"),
               TextField(
                 controller: _nameController,
                 readOnly: true,
                 decoration: _inputDeco("Auto-filled"),
               ),
-
-              // NEW COURSE FIELD ADDED HERE
               _label("Course"),
               TextField(
                 controller: _courseController,
                 readOnly: true,
                 decoration: _inputDeco("Auto-filled"),
               ),
-
               _label("Violation Type"),
               DropdownButtonFormField<String>(
                 value: _selectedViolation,

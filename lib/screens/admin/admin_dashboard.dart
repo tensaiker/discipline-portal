@@ -6,6 +6,7 @@ import 'violation_management.dart';
 import 'student_records.dart';
 import 'incident_reports.dart';
 import 'notifications.dart';
+import 'handbook_cms.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -103,10 +104,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget build(BuildContext context) {
     final List<Widget> pages = [
       _buildDashboardTab(),
-      StudentRecords(),
-      ViolationManagement(),
-      AdminIncidentReports(),
-      const Center(child: Text("Handbook CMS Module (Coming Soon)")),
+      const StudentRecords(),
+      const ViolationManagement(),
+      const AdminIncidentReports(),
+      const HandbookCMS(), // This is index 4
     ];
 
     return Scaffold(
