@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'register_screen.dart';
 import 'forgot_password.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -26,6 +29,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _bgColor = const Color(0xFFF9F7F2);
+
+  // ✅ UPDATED: Your Live Ngrok URL for the PDM Presentation
+  final String _apiBaseUrl =
+      "https://railway-hurray-uncurled.ngrok-free.dev/pdm_admin";
 
   void _startLockout() {
     setState(() {
@@ -66,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
     String password = _passwordController.text.trim();
 
     if (input.isEmpty || password.isEmpty) {
-      _showError("Please enter your Student ID and Password.");
+      _showError("Please enter your credentials.");
       return;
     }
 
@@ -98,41 +105,57 @@ class _LoginScreenState extends State<LoginScreen> {
       UserCredential userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: emailToSignIn, password: password);
 
-      // 3. FETCH USER DATA FOR GATEKEEPING
+      // 3. FETCH USER DATA
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
           .get();
 
       if (userDoc.exists) {
-        String role = userDoc.get('role') ?? 'student';
+        Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
+        String role = data['role']?.toString().toLowerCase() ?? 'student';
 
         if (role == 'admin') {
-          // Admins bypass gatekeeping
           _failedAttempts = 0;
           if (!mounted) return;
           Navigator.pushReplacementNamed(context, '/admin_home');
         } else {
-          // STUDENT GATEKEEPING LOGIC
-          bool isActive = userDoc.get('isActive') ?? false;
-          String status = userDoc.get('status') ?? '';
+          // --- STUDENT GATEKEEPING LOGIC ---
+          String studentID = data['studentID'] ?? '';
+          bool isActive = data['isActive'] ?? false;
 
-          if (isActive) {
-            // ✅ SUCCESS: Student is active and cleared
-            _failedAttempts = 0;
-            if (!mounted) return;
-            Navigator.pushReplacementNamed(context, '/student_home');
-          } else {
-            // ❌ BLOCKED: Handle different inactive states
-            await FirebaseAuth.instance.signOut();
+          if (studentID.isEmpty) {
+            throw "Student ID missing in profile.";
+          }
 
-            if (status == 'Pending') {
-              _showError("Account Pending: Waiting for admin approval.");
-            } else if (status == 'deactivated') {
-              _showError("Account Deactivated: Please contact the PDM admin.");
+          // 🛡️ MYSQL MASTER LIST SECURITY CHECK
+          // ✅ UPDATED: Added headers to skip Ngrok browser warning
+          final response = await http
+              .get(
+                Uri.parse(
+                  "$_apiBaseUrl/check_status.php?student_id=$studentID",
+                ),
+                headers: {
+                  "ngrok-skip-browser-warning":
+                      "true", // Mandatory for free ngrok
+                  "Accept": "application/json",
+                },
+              )
+              .timeout(const Duration(seconds: 10));
+
+          if (response.statusCode == 200) {
+            final mysqlData = json.decode(response.body);
+
+            if (mysqlData['status'] == 'Active' && isActive) {
+              _failedAttempts = 0;
+              if (!mounted) return;
+              Navigator.pushReplacementNamed(context, '/student_home');
             } else {
-              _showError("Access Denied: Your account is currently disabled.");
+              await FirebaseAuth.instance.signOut();
+              _showError("Access Denied: Account is disabled or pending.");
             }
+          } else {
+            throw "Unable to reach Master List server.";
           }
         }
       }
@@ -143,21 +166,20 @@ class _LoginScreenState extends State<LoginScreen> {
           _startLockout();
         } else {
           String msg = "Invalid credentials. Attempt $_failedAttempts/3";
-          if (e.code == 'user-not-found')
-            msg = "ID not found. Attempt $_failedAttempts/3";
-          if (e.code == 'wrong-password')
-            msg = "Incorrect password. Attempt $_failedAttempts/3";
+          if (e.code == 'user-not-found') msg = "ID not found.";
+          if (e.code == 'wrong-password') msg = "Incorrect password.";
           _showError(msg);
         }
       });
     } catch (e) {
-      _showError("System Error: Please try again later.");
+      _showError("System Error: $e");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _showError(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
@@ -176,7 +198,6 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 80),
           child: Column(
             children: [
-              // Logo Section
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -202,16 +223,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 "Violation & Handbook Management",
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
-
               const SizedBox(height: 50),
-
               _buildInputLabel("Student ID / Email"),
               TextField(
                 controller: _identifierController,
                 enabled: !_isLockedOut,
                 decoration: _inputDecoration("e.g. PDM-2024-000001"),
               ),
-
               if (_isLockedOut)
                 Align(
                   alignment: Alignment.centerLeft,
@@ -227,9 +245,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ),
-
               const SizedBox(height: 20),
-
               _buildInputLabel("Password"),
               TextField(
                 controller: _passwordController,
@@ -252,7 +268,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -273,9 +288,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 20),
-
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -301,9 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                 ),
               ),
-
               const SizedBox(height: 30),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

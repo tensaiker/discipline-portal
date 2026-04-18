@@ -1,183 +1,174 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:image_picker/image_picker.dart';
-import '../../verification_service.dart';
-import '../auth/register_screen.dart'; // Ensure this path is correct
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
+import 'package:csv/csv.dart';
+import 'dart:convert';
 
-class StudentVerificationFlow extends StatefulWidget {
-  const StudentVerificationFlow({super.key});
+// ✅ Web-safe import for downloads
+import 'dart:html' as html if (dart.library.io) 'package:discipline/services/stub_html.dart';
+
+// --- GLOBAL COURSE DATA ---
+const Map<String, String> _pdmCourseMap = {
+  'BSENTREP': 'BS Entrepreneurship',
+  'BSIT': 'BS Information Technology',
+  'BSCS': 'BS Computer Science',
+  'BSHM': 'BS Hospitality Management',
+  'BSTM': 'BS Tourism Management',
+  'BSOA': 'BS Office Administration',
+  'BECED': 'BS Early Childhood Education',
+  'BTLED': 'BT Livelihood Education',
+};
+
+class StudentRecords extends StatefulWidget {
+  const StudentRecords({super.key});
 
   @override
-  State<StudentVerificationFlow> createState() =>
-      _StudentVerificationFlowState();
+  State<StudentRecords> createState() => _StudentRecordsState();
 }
 
-class _StudentVerificationFlowState extends State<StudentVerificationFlow> {
-  final PageController _pageController = PageController();
-  final _verificationService = VerificationService();
+class _StudentRecordsState extends State<StudentRecords> {
+  final Color _darkBrown = const Color(0xFF513C2C);
+  final Color _yellow = const Color(0xFFFFC107);
+  final Color _bgColor = const Color(0xFFF9F7F2);
 
-  File? _selectedIdPhoto;
-  bool _isUploading = false;
+  bool _isSyncing = false;
+  String _searchQuery = "";
+  String _selectedCourse = "All";
 
-  final Color _creamyWhite = const Color(0xFFF9F7F2);
-  final Color _creamyYellow = const Color(0xFFF9EFCC);
-  final Color _darkBrown = const Color(0xFF4E342E);
-  final Color _approvalGreen = const Color(0xFFE5F5E0);
-  final Color _approvalGreenText = const Color(0xFF006400);
+  final String _apiBaseUrl = kIsWeb 
+      ? "http://localhost/pdm_admin" 
+      : "http://192.168.100.72/pdm_admin";
 
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 70,
+  // --- HELPERS ---
+  String _getCourseFullName(String? input) {
+    if (input == null || input.isEmpty) return "N/A";
+    String key = input.toUpperCase().replaceAll(RegExp(r'[\s-]'), '');
+    return _pdmCourseMap[key] ?? input; 
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color, behavior: SnackBarBehavior.floating),
     );
-
-    if (image != null) {
-      setState(() {
-        _selectedIdPhoto = File(image.path);
-      });
-    }
   }
 
-  // ==========================================
-  // UPDATED LOGIC: SCAN ID & FETCH MASTER DATA
-  // ==========================================
-  Future<void> _submitForVerification() async {
-    if (_selectedIdPhoto == null) return;
-
-    setState(() => _isUploading = true);
-
+  // --- LOGIC: ACTIONS ---
+  Future<void> _syncWithMySQL(String studentID, String status) async {
     try {
-      // 1. Call the new fetchMasterData method from your service
-      final Map<String, dynamic>? studentData = await _verificationService
-          .fetchMasterData(imageFile: _selectedIdPhoto!);
-
-      if (studentData != null) {
-        // 2. SUCCESS: Navigate to RegisterScreen and pass the data for auto-fill
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => RegisterScreen(autoFillData: studentData),
-          ),
-        );
-      } else {
-        // 3. FAIL: Show error if ID is not in the Master List
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "ID not found in Master List. Please ensure the photo is clear.",
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-      );
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
-    }
+      await http.post(Uri.parse("$_apiBaseUrl/activate_student.php"), 
+      body: {"student_id": studentID, "status": status});
+    } catch (e) { print("MySQL Sync Error: $e"); }
   }
 
+  Future<void> _approveStudent(String docId, String name, String studentID) async {
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(docId).update({
+        'isApproved': true, 'isActive': true, 'status': 'cleared'
+      });
+      await _syncWithMySQL(studentID, 'Active');
+      _showSnackBar("$name approved!", Colors.green);
+    } catch (e) { _showSnackBar("Error: $e", Colors.red); }
+  }
+
+  Future<void> _toggleAccount(String docId, String studentID, bool currentlyActive) async {
+    try {
+      bool newStatus = !currentlyActive;
+      await FirebaseFirestore.instance.collection('users').doc(docId).update({
+        'isActive': newStatus, 
+        'status': newStatus ? 'cleared' : 'deactivated'
+      });
+      await _syncWithMySQL(studentID, newStatus ? 'Active' : 'Disabled');
+      _showSnackBar(currentlyActive ? "Deactivated" : "Activated", 
+      currentlyActive ? Colors.orange : Colors.green);
+    } catch (e) { _showSnackBar("Error: $e", Colors.red); }
+  }
+
+  // --- UI BUILDERS ---
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.white,
-        leading: BackButton(
-          color: Colors.black,
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: _buildUploadScreen(),
+    return DefaultTabController(
+      length: 3,
+      child: Builder(builder: (context) {
+        return Scaffold(
+          backgroundColor: _bgColor,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            title: Text("Student Records", style: TextStyle(color: _darkBrown, fontSize: 18, fontWeight: FontWeight.bold)),
+            actions: [
+              IconButton(icon: Icon(Icons.download_outlined, color: _darkBrown), 
+              onPressed: () {
+                int tabIndex = DefaultTabController.of(context).index;
+                // Add export logic here if needed
+              }),
+            ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(50),
+              child: TabBar(
+                labelColor: _darkBrown,
+                indicatorColor: _yellow,
+                tabs: const [Tab(text: "Active"), Tab(text: "Pending"), Tab(text: "Inactive")],
+              ),
+            ),
+          ),
+          body: Column(
+            children: [
+              _buildSearchAndFilter(),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _buildFilteredList('active'),
+                    _buildFilteredList('pending'),
+                    _buildFilteredList('inactive'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
     );
   }
 
-  Widget _buildUploadScreen() {
-    bool hasFile = _selectedIdPhoto != null;
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
+  Widget _buildSearchAndFilter() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+      color: Colors.white,
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _stepDot(isActive: true),
-              const SizedBox(width: 5),
-              _stepDot(isActive: false),
-              const SizedBox(width: 5),
-              _stepDot(isActive: false),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            "Step 1 of 2",
-            style: TextStyle(color: Colors.grey, fontSize: 10),
-          ),
-          const SizedBox(height: 20),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              "Verify Identity",
-              style: GoogleFonts.poppins(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const Text(
-            "Upload your PDM ID to unlock the registration form.",
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
-          const SizedBox(height: 30),
           Expanded(
-            child: GestureDetector(
-              onTap: _pickImage,
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: _creamyWhite,
-                  borderRadius: BorderRadius.circular(15),
-                  border: Border.all(color: Colors.black12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: hasFile
-                      ? _buildFileSelectedPreview()
-                      : _buildUploadPlaceholder(),
-                ),
+            flex: 2,
+            child: TextField(
+              onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+              decoration: InputDecoration(
+                hintText: "Search Name or ID...",
+                prefixIcon: const Icon(Icons.search, size: 20),
+                filled: true,
+                fillColor: _bgColor,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
               ),
             ),
           ),
-          const SizedBox(height: 40),
-          SizedBox(
-            width: double.infinity,
-            height: 55,
-            child: ElevatedButton(
-              onPressed: hasFile && !_isUploading
-                  ? _submitForVerification
-                  : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: hasFile ? _darkBrown : Colors.black12,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10)),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedCourse,
+                  isExpanded: true,
+                  style: const TextStyle(fontSize: 11, color: Colors.black87, fontWeight: FontWeight.bold),
+                  items: ["All", ..._pdmCourseMap.keys].map((c) => DropdownMenuItem(
+                    value: c, 
+                    child: Text(c == "All" ? "All Courses" : _getCourseFullName(c), overflow: TextOverflow.ellipsis),
+                  )).toList(),
+                  onChanged: (val) => setState(() => _selectedCourse = val!),
                 ),
               ),
-              child: _isUploading
-                  ? const CircularProgressIndicator(color: Colors.white)
-                  : const Text(
-                      "Scan & Continue",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
             ),
           ),
         ],
@@ -185,75 +176,78 @@ class _StudentVerificationFlowState extends State<StudentVerificationFlow> {
     );
   }
 
-  Widget _buildFileSelectedPreview() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
+  Widget _buildFilteredList(String filterType) {
+    Query query = FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'student');
+    
+    if (filterType == 'active') query = query.where('isActive', isEqualTo: true);
+    else if (filterType == 'pending') query = query.where('status', isEqualTo: 'Pending');
+    else query = query.where('isActive', isEqualTo: false).where('status', whereIn: ['Disabled', 'deactivated', 'disabled']);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: query.snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+        var docs = snapshot.data!.docs.where((doc) {
+          var data = doc.data() as Map<String, dynamic>;
+          String name = (data['fullName'] ?? "").toString().toLowerCase();
+          String id = (data['studentID'] ?? "").toString().toLowerCase();
+          String dbCourse = (data['course'] ?? "").toString().toUpperCase();
+
+          bool matchesSearch = name.contains(_searchQuery) || id.contains(_searchQuery);
+          bool matchesCourse = _selectedCourse == "All" || 
+                               dbCourse == _selectedCourse.toUpperCase() ||
+                               _getCourseFullName(dbCourse).toUpperCase().contains(_selectedCourse.toUpperCase());
+
+          return matchesSearch && matchesCourse;
+        }).toList();
+
+        if (docs.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text("No records found.")));
+
+        return ListView.builder(
           padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: _approvalGreen,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(Icons.check, color: _approvalGreenText, size: 30),
-        ),
-        const SizedBox(height: 15),
-        Text(
-          "ID Card Selected",
-          style: TextStyle(
-            color: _approvalGreenText,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextButton(
-          onPressed: () => setState(() => _selectedIdPhoto = null),
-          child: const Text(
-            "Change Photo",
-            style: TextStyle(color: Colors.red),
-          ),
-        ),
-      ],
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            var docId = docs[index].id;
+            var data = docs[index].data() as Map<String, dynamic>;
+            return _buildStudentCard(docId, data, filterType);
+          },
+        );
+      },
     );
   }
 
-  Widget _buildUploadPlaceholder() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: _creamyYellow,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            Icons.camera_alt_outlined,
-            color: Colors.amber.shade900,
-            size: 30,
-          ),
-        ),
-        const SizedBox(height: 15),
-        const Text(
-          "Tap to Scan Student ID",
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
-        const Text(
-          "Ensure text is clear and readable",
-          style: TextStyle(color: Colors.grey, fontSize: 11),
-        ),
-      ],
-    );
-  }
+  Widget _buildStudentCard(String docId, Map<String, dynamic> data, String type) {
+    bool isActive = data['isActive'] ?? false;
+    String studentID = data['studentID'] ?? '';
 
-  Widget _stepDot({required bool isActive}) {
     return Container(
-      width: 8,
-      height: 8,
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: isActive ? Colors.amber : _creamyWhite,
-        shape: BoxShape.circle,
-        border: isActive ? null : Border.all(color: Colors.black12),
+        color: Colors.white, borderRadius: BorderRadius.circular(15),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+      ),
+      child: ListTile(
+        leading: CircleAvatar(backgroundColor: _darkBrown.withOpacity(0.1), child: Icon(Icons.person, color: _darkBrown)),
+        title: Text(data['fullName'] ?? 'N/A', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("ID: $studentID", style: const TextStyle(fontSize: 11)),
+            Text(_getCourseFullName(data['course']), style: TextStyle(fontSize: 10, color: _darkBrown.withOpacity(0.8))),
+          ],
+        ),
+        trailing: type == 'pending' 
+          ? ElevatedButton(
+              onPressed: () => _approveStudent(docId, data['fullName'], studentID),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, elevation: 0),
+              child: const Text("Approve", style: TextStyle(fontSize: 11, color: Colors.white)),
+            )
+          : TextButton(
+              onPressed: () => _toggleAccount(docId, studentID, isActive),
+              child: Text(isActive ? "Deactivate" : "Activate", 
+                style: TextStyle(color: isActive ? Colors.red : Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
       ),
     );
   }

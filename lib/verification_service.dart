@@ -2,14 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 class VerificationService {
   static const String _cloudName = "dnk4oieux";
   static const String _uploadPreset = "pdm_upload";
 
-  /// This function now returns the Student Data (Map) if the ID matches
-  /// the master list, allowing the UI to auto-fill the form.
+  // ✅ UPDATED: Your Live Ngrok URL for the PDM Presentation
+  static const String _apiBaseUrl =
+      "https://railway-hurray-uncurled.ngrok-free.dev/pdm_admin";
+
   Future<Map<String, dynamic>?> fetchMasterData({
     required File imageFile,
   }) async {
@@ -22,45 +23,61 @@ class VerificationService {
       );
 
       String scannedText = recognizedText.text;
-      RegExp pdmRegex = RegExp(r"PDM-\d{4}-\d{6}");
+
+      // Matches PDM-2026-123456 or PDM2026123456
+      RegExp pdmRegex = RegExp(r"PDM-?\d{4}-?\d{6}");
       String? detectedID = pdmRegex.stringMatch(scannedText);
 
       if (detectedID == null) return null;
 
-      // 2. SEARCH THE MASTER LIST (The 'students' collection)
-      // We look for students who are currently 'Disabled' (not yet registered)
-      var masterQuery = await FirebaseFirestore.instance
-          .collection('students')
-          .where('studentID', isEqualTo: detectedID)
-          .where(
-            'status',
-            isEqualTo: 'Disabled',
-          ) // ✅ Only finds pre-registered/inactive accounts
-          .limit(1)
-          .get();
+      // 2. SEARCH THE MYSQL MASTER LIST (Through Ngrok Tunnel)
+      final response = await http.get(
+        Uri.parse("$_apiBaseUrl/verify_student.php?student_id=$detectedID"),
+        headers: {
+          // ✅ MANDATORY: This skips the Ngrok warning page so the scanner can work
+          "ngrok-skip-browser-warning": "true",
+          "Accept": "application/json",
+        },
+      );
 
-      if (masterQuery.docs.isEmpty) return null;
+      if (response.statusCode != 200) return null;
 
-      // 3. Upload the ID photo to Cloudinary for the Admin to see later
-      var request = http.MultipartRequest(
+      final result = json.decode(response.body);
+
+      // Stop if the student isn't in the XAMPP Master List
+      if (result['status'] != 'success') return null;
+
+      // 3. Upload the ID photo to Cloudinary (Standard Cloud Upload)
+      var uploadRequest = http.MultipartRequest(
         'POST',
         Uri.parse('https://api.cloudinary.com/v1_1/$_cloudName/image/upload'),
       );
-      request.fields['upload_preset'] = _uploadPreset;
-      request.files.add(
+
+      // Note: Cloudinary is separate from Ngrok, so no extra header needed here.
+      uploadRequest.fields['upload_preset'] = _uploadPreset;
+      uploadRequest.files.add(
         await http.MultipartFile.fromPath('file', imageFile.path),
       );
 
-      var response = await request.send();
-      if (response.statusCode != 200) return null;
+      var uploadResponse = await uploadRequest.send();
+      if (uploadResponse.statusCode != 200) return null;
 
-      var responseData = await response.stream.bytesToString();
-      String imageUrl = jsonDecode(responseData)['secure_url'];
+      var uploadData = await uploadResponse.stream.bytesToString();
+      String imageUrl = jsonDecode(uploadData)['secure_url'];
 
       // 4. PREPARE THE DATA FOR AUTO-FILL
-      var studentData = masterQuery.docs.first.data();
-      studentData['idCardUrl'] =
-          imageUrl; // Attach the photo link for the registration step
+      // This maps the MySQL results to your Registration UI fields
+      Map<String, dynamic> studentData = {
+        'first_name': result['data']['first_name'],
+        'middle_name': result['data']['middle_name'],
+        'last_name': result['data']['last_name'],
+        'suffix': result['data']['suffix'],
+        'sex': result['data']['sex'],
+        'parentContact': result['data']['parentContact'],
+        'course': result['data']['course'],
+        'studentID': detectedID,
+        'idCardUrl': imageUrl,
+      };
 
       return studentData;
     } catch (e) {

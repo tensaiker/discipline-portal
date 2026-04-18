@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb; // ✅ Needed for Web detection
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'violation_management.dart';
 import 'student_records.dart';
 import 'incident_reports.dart';
@@ -17,18 +21,44 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> {
   int _selectedIndex = 0;
+  int _totalMasterStudents = 0;
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _bgColor = const Color(0xFFE5DCD3);
+
+  // ✅ DYNAMIC API URL: Works for both Web (localhost) and Mobile (IP)
+  final String _apiBaseUrl = kIsWeb
+      ? "http://localhost/pdm_admin"
+      : "https://railway-hurray-uncurled.ngrok-free.dev/pdm_admin";
 
   @override
   void initState() {
     super.initState();
-    // 1. START BOTH LISTENERS
     _startIncidentListener();
     _startAccountListener();
+    _fetchMySQLStats();
   }
 
-  // LISTENER A: For New Incident Reports
+  Future<void> _fetchMySQLStats() async {
+    try {
+      final response = await http
+          .get(Uri.parse("$_apiBaseUrl/get_stats.php"))
+          .timeout(
+            const Duration(seconds: 5),
+          ); // ✅ Prevents hanging if server is off
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (mounted) {
+          setState(() {
+            _totalMasterStudents = int.parse(data['total'].toString());
+          });
+        }
+      }
+    } catch (e) {
+      print("Error fetching MySQL stats: $e");
+    }
+  }
+
   void _startIncidentListener() {
     FirebaseFirestore.instance
         .collection('violations')
@@ -46,7 +76,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         });
   }
 
-  // LISTENER B: For New Pending Accounts (The one you asked for!)
   void _startAccountListener() {
     FirebaseFirestore.instance
         .collection('users')
@@ -107,7 +136,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       const StudentRecords(),
       const ViolationManagement(),
       const AdminIncidentReports(),
-      const HandbookCMS(), // This is index 4
+      const HandbookCMS(),
     ];
 
     return Scaffold(
@@ -133,54 +162,49 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ],
         ),
-        actions: [
-          // NOTIFICATION BELL (Combines both Pending Reports and Pending Accounts)
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('violations')
-                .where('status', isEqualTo: 'pending')
-                .snapshots(),
-            builder: (context, violationSnap) {
-              return StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('users')
-                    .where('role', isEqualTo: 'student')
-                    .where('isApproved', isEqualTo: false)
-                    .snapshots(),
-                builder: (context, userSnap) {
-                  int totalPending =
-                      (violationSnap.hasData
-                          ? violationSnap.data!.docs.length
-                          : 0) +
-                      (userSnap.hasData ? userSnap.data!.docs.length : 0);
-
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: IconButton(
-                      icon: Badge(
-                        label: Text(totalPending.toString()),
-                        isLabelVisible: totalPending > 0,
-                        child: const Icon(
-                          Icons.notifications_none_rounded,
-                          size: 26,
-                        ),
-                      ),
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const AdminNotifications(),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-        ],
+        actions: [_buildNotificationBell()],
       ),
       drawer: _buildDrawer(),
       body: pages[_selectedIndex],
+    );
+  }
+
+  Widget _buildNotificationBell() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('violations')
+          .where('status', isEqualTo: 'pending')
+          .snapshots(),
+      builder: (context, violationSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .where('role', isEqualTo: 'student')
+              .where('isApproved', isEqualTo: false)
+              .snapshots(),
+          builder: (context, userSnap) {
+            int totalPending =
+                (violationSnap.hasData ? violationSnap.data!.docs.length : 0) +
+                (userSnap.hasData ? userSnap.data!.docs.length : 0);
+            return Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: IconButton(
+                icon: Badge(
+                  label: Text(totalPending.toString()),
+                  isLabelVisible: totalPending > 0,
+                  child: const Icon(Icons.notifications_none_rounded, size: 26),
+                ),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AdminNotifications(),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -191,8 +215,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
           .where('role', isEqualTo: 'student')
           .snapshots(),
       builder: (context, userSnapshot) {
+        // ✅ ERROR HANDLING: If Firestore fails (e.g. Missing Index), show the error
+        if (userSnapshot.hasError)
+          return Center(child: Text("Error: ${userSnapshot.error}"));
         if (!userSnapshot.hasData)
           return const Center(child: CircularProgressIndicator());
+
         var allUsers = userSnapshot.data!.docs;
 
         return StreamBuilder<QuerySnapshot>(
@@ -200,6 +228,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               .collection('violations')
               .snapshots(),
           builder: (context, violationSnapshot) {
+            if (violationSnapshot.hasError)
+              return Center(child: Text("Error: ${violationSnapshot.error}"));
             if (!violationSnapshot.hasData)
               return const Center(child: CircularProgressIndicator());
 
@@ -212,8 +242,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
               'Other': 0,
             };
             int verifiedViolationsCount = 0;
-
-            // STATS CALCULATION
             int pendingReports = violationSnapshot.data!.docs
                 .where(
                   (d) =>
@@ -232,143 +260,77 @@ class _AdminDashboardState extends State<AdminDashboard> {
               String status = (data['status'] ?? 'pending')
                   .toString()
                   .toLowerCase();
-              if (status == 'approved' ||
-                  status == 'resolved' ||
-                  status == 'cleared') {
+              if (['approved', 'resolved', 'cleared'].contains(status)) {
                 String type = data['type'] ?? 'Other';
-                if (dataMap.containsKey(type)) {
-                  dataMap[type] = dataMap[type]! + 1;
-                } else {
-                  dataMap['Other'] = dataMap['Other']! + 1;
-                }
+                dataMap[dataMap.containsKey(type) ? type : 'Other'] =
+                    (dataMap[dataMap.containsKey(type) ? type : 'Other'] ?? 0) +
+                    1;
                 verifiedViolationsCount++;
               }
             }
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: 1.2,
-                    children: [
-                      _buildStatCard(
-                        'Total\nStudents',
-                        allUsers.length.toString(),
-                        Icons.people,
-                        Colors.transparent,
-                      ),
-
-                      // CARD 2: PENDING ACCOUNTS (Will turn Yellow if > 0)
-                      _buildStatCard(
-                        'Pending\nAccounts',
-                        pendingAccounts.toString(),
-                        Icons.person_add_alt_1,
-                        pendingAccounts > 0
-                            ? Colors.yellow.shade700
-                            : Colors.transparent,
-                      ),
-
-                      _buildStatCard(
-                        'Account\nViolations',
-                        verifiedViolationsCount.toString(),
-                        Icons.pan_tool,
-                        Colors.red.shade700,
-                      ),
-
-                      // CARD 4: PENDING REPORTS (Will turn Orange if > 0)
-                      _buildStatCard(
-                        'New\nReports',
-                        pendingReports.toString(),
-                        Icons.notification_important,
-                        pendingReports > 0 ? Colors.orange : Colors.transparent,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 25),
-                  const Text(
-                    'Incident reports',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const Text(
-                    'Verified Violations (Approved/Resolved)',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 15),
-
-                  // PIE CHART
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(15),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Column(
+            return RefreshIndicator(
+              onRefresh: _fetchMySQLStats,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 1.2,
                       children: [
-                        SizedBox(
-                          height: 200,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              PieChart(
-                                PieChartData(
-                                  sectionsSpace: 2,
-                                  centerSpaceRadius: 45,
-                                  sections: _chartSections(
-                                    dataMap,
-                                    verifiedViolationsCount,
-                                  ),
-                                ),
-                              ),
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    "$verifiedViolationsCount",
-                                    style: const TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const Text(
-                                    "TOTAL",
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.grey,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                        _buildStatCard(
+                          'Master List\nStudents',
+                          _totalMasterStudents.toString(),
+                          Icons.storage,
+                          Colors.blue.shade700,
                         ),
-                        const SizedBox(height: 20),
-                        Wrap(
-                          spacing: 20,
-                          runSpacing: 10,
-                          children: dataMap.entries
-                              .where((e) => e.value > 0)
-                              .map((e) => _buildLegendItem(e.key, e.value))
-                              .toList(),
+                        _buildStatCard(
+                          'Pending\nAccounts',
+                          pendingAccounts.toString(),
+                          Icons.person_add_alt_1,
+                          pendingAccounts > 0
+                              ? Colors.yellow.shade700
+                              : Colors.transparent,
+                        ),
+                        _buildStatCard(
+                          'Account\nViolations',
+                          verifiedViolationsCount.toString(),
+                          Icons.pan_tool,
+                          Colors.red.shade700,
+                        ),
+                        _buildStatCard(
+                          'New\nReports',
+                          pendingReports.toString(),
+                          Icons.notification_important,
+                          pendingReports > 0
+                              ? Colors.orange
+                              : Colors.transparent,
                         ),
                       ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 25),
+                    const Text(
+                      'Incident reports',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'Verified Violations (Approved/Resolved)',
+                      style: TextStyle(fontSize: 14, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 15),
+                    _buildPieChart(dataMap, verifiedViolationsCount),
+                  ],
+                ),
               ),
             );
           },
@@ -377,7 +339,68 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  // --- HELPER WIDGETS (UNCHANGED) ---
+  Widget _buildPieChart(Map<String, int> dataMap, int total) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+        ],
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 200,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                PieChart(
+                  PieChartData(
+                    sectionsSpace: 2,
+                    centerSpaceRadius: 45,
+                    sections: _chartSections(dataMap, total),
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "$total",
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      "TOTAL",
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 20,
+            runSpacing: 10,
+            children: dataMap.entries
+                .where((e) => e.value > 0)
+                .map((e) => _buildLegendItem(e.key, e.value))
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<PieChartSectionData> _chartSections(Map<String, int> counts, int total) {
     final List<Color> colors = [
       const Color(0xFFBC6C74),
@@ -390,11 +413,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
     int i = 0;
     return counts.entries.map((entry) {
       final double val = entry.value.toDouble();
-      final double percentage = total > 0 ? (val / total) * 100 : 0;
       return PieChartSectionData(
-        color: colors[i++],
-        value: val > 0 ? val : 0.001,
-        title: val > 0 ? '${percentage.toStringAsFixed(0)}%' : '',
+        color: colors[i++ % colors.length],
+        value: val > 0 ? val : 0.1,
+        title: val > 0
+            ? '${((val / (total > 0 ? total : 1)) * 100).toStringAsFixed(0)}%'
+            : '',
         radius: 50,
         titleStyle: const TextStyle(
           fontSize: 10,

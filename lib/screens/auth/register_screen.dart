@@ -8,8 +8,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../verification_service.dart';
 
 class RegisterScreen extends StatefulWidget {
-  final Map<String, dynamic>? autoFillData; // <--- Needs this line!
-  const RegisterScreen({super.key, this.autoFillData}); // <--- And this!
+  final Map<String, dynamic>? autoFillData;
+  const RegisterScreen({super.key, this.autoFillData});
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -19,15 +19,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final PageController _pageController = PageController();
   final _service = VerificationService();
 
-  // Controllers (Auto-filled by ID Scan)
+  // Controllers
   final _firstNameController = TextEditingController();
-  final _middleNameController = TextEditingController(); // ✅ Added
+  final _middleNameController = TextEditingController();
   final _lastNameController = TextEditingController();
-  final _suffixController = TextEditingController(); // ✅ Added
+  final _suffixController = TextEditingController();
   final _idController = TextEditingController();
   final _parentController = TextEditingController();
-
-  // Student Provided Controllers
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -40,7 +38,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isVerifying = false;
   bool _isRegistering = false;
 
-  // Design Colors
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _yellow = const Color(0xFFFFC107);
   final Color _creamyWhite = const Color(0xFFF9F7F2);
@@ -48,7 +45,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ AUTO-FILL LOGIC: Runs on startup if data was passed
     if (widget.autoFillData != null) {
       _fillFormWithData(widget.autoFillData!);
     }
@@ -56,18 +52,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _fillFormWithData(Map<String, dynamic> data) {
     setState(() {
-      _firstNameController.text = data['firstName'] ?? '';
-      _middleNameController.text =
-          data['middleName'] ?? ''; // ✅ Handles Middle Name
-      _lastNameController.text = data['lastName'] ?? '';
-      _suffixController.text =
-          data['suffix'] ?? ''; // ✅ Handles Suffix (Jr, III, etc.)
+      _firstNameController.text = data['first_name'] ?? '';
+      _middleNameController.text = data['middle_name'] ?? '';
+      _lastNameController.text = data['last_name'] ?? '';
+      _suffixController.text = data['suffix'] ?? '';
 
+      // Auto-format ID for display
       String rawID = data['studentID'] ?? '';
       _idController.text = rawID.replaceAll("PDM-", "").replaceAll("-", "");
 
-      _selectedSex = data['sex'];
-      _selectedCourse = data['course'];
+      _selectedSex = data['sex'] ?? 'Male';
+      _selectedCourse = data['course'] ?? 'BSIT';
 
       String rawParent = (data['parentContact'] ?? '').toString();
       _parentController.text = rawParent.replaceFirst("639", "");
@@ -76,7 +71,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
   }
 
-  // LOGIC: ID SCAN & AUTO-FILL
   Future<void> _handleIDScan() async {
     if (_selectedIdPhoto == null) return;
     setState(() => _isVerifying = true);
@@ -90,37 +84,55 @@ class _RegisterScreenState extends State<RegisterScreen> {
         );
       } else {
         _showSnackBar(
-          "ID not found in Master List or already taken.",
+          "ID not found in Master List. Ensure the text is clear.",
           Colors.red,
         );
       }
     } catch (e) {
-      _showSnackBar("Scan Error: $e", Colors.red);
+      _showSnackBar("Scan Error: Check your Ngrok connection.", Colors.red);
     } finally {
       setState(() => _isVerifying = false);
     }
   }
 
-  // LOGIC: FINAL SUBMISSION
   Future<void> _handleFinalRegister() async {
     if (_emailController.text.isEmpty || _passwordController.text.length < 6) {
-      _showSnackBar("Please check your email and password.", Colors.orange);
+      _showSnackBar(
+        "Please check your email and password (min 6 chars).",
+        Colors.orange,
+      );
       return;
     }
 
     setState(() => _isRegistering = true);
     try {
+      String rawIdInput = _idController.text.trim();
+
+      // Ensure formatted ID matches DB style (PDM-YYYY-XXXXXX)
+      String formattedID = rawIdInput.length > 4
+          ? "PDM-${rawIdInput.substring(0, 4)}-${rawIdInput.substring(4)}"
+          : rawIdInput;
+
+      // 🛑 STEP 1: PREVENT DUPLICATE REGISTRATION
+      final existingUser = await FirebaseFirestore.instance
+          .collection('users')
+          .where('studentID', isEqualTo: formattedID)
+          .get();
+
+      if (existingUser.docs.isNotEmpty) {
+        _showSnackBar("This Student ID is already registered!", Colors.red);
+        setState(() => _isRegistering = false);
+        return;
+      }
+
+      // STEP 2: CREATE AUTH USER
       UserCredential cred = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
             email: _emailController.text.trim(),
             password: _passwordController.text.trim(),
           );
 
-      String rawIdInput = _idController.text.trim();
-      String formattedID =
-          "PDM-${rawIdInput.substring(0, 4)}-${rawIdInput.substring(4)}";
-
-      // ✅ SMART NAME BUILDER: First Middle Last Suffix
+      // STEP 3: BUILD FULL NAME
       String fName = _firstNameController.text.trim();
       String mName = _middleNameController.text.trim();
       String lName = _lastNameController.text.trim();
@@ -131,6 +143,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               .toUpperCase()
               .trim();
 
+      // STEP 4: SAVE TO FIRESTORE
       await FirebaseFirestore.instance
           .collection('users')
           .doc(cred.user!.uid)
@@ -148,7 +161,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             'sex': _selectedSex,
             'idCardUrl': _idCardUrl,
             'role': 'student',
-            'status': 'Pending',
+            'status': 'Pending', // Setting to pending until admin approves
             'isActive': false,
             'isApproved': false,
             'createdAt': FieldValue.serverTimestamp(),
@@ -166,6 +179,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _showSnackBar(String msg, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
@@ -187,7 +201,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // STEP 1: ID SCAN UI
+  // UI BUILDERS
   Widget _buildStep1() {
     bool hasFile = _selectedIdPhoto != null;
     return Padding(
@@ -212,7 +226,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const Text(
-            "Scan your PDM ID to unlock the form.",
+            "Scan your PDM ID to unlock the registration form.",
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey),
           ),
@@ -222,7 +236,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               onTap: () async {
                 final picker = ImagePicker();
                 final XFile? image = await picker.pickImage(
-                  source: ImageSource.gallery,
+                  source: ImageSource.camera, // Better for demo
                   imageQuality: 70,
                 );
                 if (image != null)
@@ -266,7 +280,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // STEP 2: AUTO-FILLED FORM UI
   Widget _buildStep2() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -296,12 +309,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const Text(
-            "Verify your official details below.",
+            "Official PDM details detected. Please set your credentials.",
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 30),
-
-          // NAME FIELDS
           Row(
             children: [
               Expanded(
@@ -337,13 +348,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: _textField(
                   "Suffix",
                   _suffixController,
-                  hint: "None",
+                  hint: "N/A",
                   readOnly: true,
                 ),
               ),
             ],
           ),
-
           _textField(
             "Student ID",
             _idController,
@@ -356,19 +366,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             readOnly: true,
           ),
           _textField(
-            "Sex",
-            TextEditingController(text: _selectedSex),
-            readOnly: true,
-          ),
-          _textField(
             "Parent Contact",
             _parentController,
             prefix: "639",
             readOnly: true,
           ),
-
           const Divider(height: 40),
-
           _textField(
             "Email Address",
             _emailController,
@@ -381,13 +384,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
               suffixIcon: IconButton(
                 icon: Icon(
                   _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                  color: _darkBrown,
                 ),
                 onPressed: () =>
                     setState(() => _isPasswordVisible = !_isPasswordVisible),
               ),
             ),
           ),
-
           const SizedBox(height: 30),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -413,7 +416,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // STEP 3: SUCCESS UI
   Widget _buildStep3() {
     return Padding(
       padding: const EdgeInsets.all(24.0),
@@ -427,14 +429,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 20),
           Text(
-            "Registration Pending",
+            "Success! Registration Sent",
             style: GoogleFonts.poppins(
               fontSize: 22,
               fontWeight: FontWeight.bold,
             ),
           ),
           const Text(
-            "Your ID matched our records! Please wait for approval.",
+            "Your ID matched our official record. Our registrar will verify and activate your account shortly.",
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey),
           ),
@@ -458,12 +460,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // HELPERS
+  // --- HELPERS ---
   Widget _buildFilePreview() => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
     children: [
       const Icon(Icons.check_circle, color: Colors.green, size: 40),
       const Text(
-        "ID Selected",
+        "ID Captured Successfully",
         style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
       ),
       TextButton(
@@ -472,16 +475,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     ],
   );
+
   Widget _buildUploadPlaceholder() => Column(
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
       Icon(Icons.camera_alt_outlined, color: Colors.amber.shade900, size: 40),
       const Text(
-        "Capture PDM ID",
+        "Tap to Scan PDM ID",
         style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: Text(
+          "Ensure student name and ID are readable",
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 10, color: Colors.grey),
+        ),
       ),
     ],
   );
+
   Widget _stepIndicator(int currentStep) => Row(
     mainAxisAlignment: MainAxisAlignment.center,
     children: List.generate(
@@ -497,6 +510,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     ),
   );
+
   Widget _textField(
     String label,
     TextEditingController controller, {
@@ -508,16 +522,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     child: TextField(
       controller: controller,
       readOnly: readOnly,
+      style: const TextStyle(fontSize: 13),
       decoration: _inputDecoration(label).copyWith(
         prefixText: prefix,
         hintText: hint,
-        fillColor: readOnly ? Colors.grey.shade100 : Colors.white,
+        fillColor: readOnly ? Colors.grey.shade200 : Colors.white,
       ),
     ),
   );
+
   InputDecoration _inputDecoration(String label) => InputDecoration(
     labelText: label,
     filled: true,
+    labelStyle: const TextStyle(fontSize: 12),
     contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(12),
