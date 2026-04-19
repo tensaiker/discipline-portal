@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'register_screen.dart';
 import 'forgot_password.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _bgColor = const Color(0xFFF9F7F2);
 
-  // ✅ UPDATED: Your Live Ngrok URL for the PDM Presentation
+  // ✅ Your Live Ngrok URL for the PDM Presentation
   final String _apiBaseUrl =
       "https://railway-hurray-uncurled.ngrok-free.dev/pdm_admin";
 
@@ -51,6 +50,8 @@ class _LoginScreenState extends State<LoginScreen> {
             timer.cancel();
           }
         });
+      } else {
+        timer.cancel();
       }
     });
   }
@@ -63,9 +64,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ==========================================
-  // UPDATED LOGIN LOGIC (THE GATEKEEPER)
-  // ==========================================
   Future<void> loginUser() async {
     if (_isLockedOut) return;
 
@@ -82,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       String emailToSignIn = "";
 
-      // 1. ID LOOKUP: Check if input is email or ID
+      // 1. ID LOOKUP
       if (input.contains('@')) {
         emailToSignIn = input;
       } else {
@@ -105,76 +103,85 @@ class _LoginScreenState extends State<LoginScreen> {
       UserCredential userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: emailToSignIn, password: password);
 
+      if (!mounted) return;
+
       // 3. FETCH USER DATA
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
           .get();
 
-      if (userDoc.exists) {
-        Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
-        String role = data['role']?.toString().toLowerCase() ?? 'student';
+      if (!userDoc.exists) throw "User profile not found in database.";
 
-        if (role == 'admin') {
-          _failedAttempts = 0;
-          if (!mounted) return;
-          Navigator.pushReplacementNamed(context, '/admin_home');
-        } else {
-          // --- STUDENT GATEKEEPING LOGIC ---
-          String studentID = data['studentID'] ?? '';
-          bool isActive = data['isActive'] ?? false;
+      Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
+      String role = data['role']?.toString().toLowerCase() ?? 'student';
 
-          if (studentID.isEmpty) {
-            throw "Student ID missing in profile.";
-          }
+      if (role == 'admin') {
+        _failedAttempts = 0;
+        _navigateSafe('/admin_home');
+      } else {
+        // --- STUDENT GATEKEEPING LOGIC ---
+        String studentID = data['studentID'] ?? '';
+        bool isActive = data['isActive'] ?? false;
 
-          // 🛡️ MYSQL MASTER LIST SECURITY CHECK
-          // ✅ UPDATED: Added headers to skip Ngrok browser warning
-          final response = await http
-              .get(
-                Uri.parse(
-                  "$_apiBaseUrl/check_status.php?student_id=$studentID",
-                ),
-                headers: {
-                  "ngrok-skip-browser-warning":
-                      "true", // Mandatory for free ngrok
-                  "Accept": "application/json",
-                },
-              )
-              .timeout(const Duration(seconds: 10));
+        if (studentID.isEmpty) throw "Student ID missing in profile.";
 
-          if (response.statusCode == 200) {
-            final mysqlData = json.decode(response.body);
+        // 🛡️ MYSQL MASTER LIST SECURITY CHECK
+        final response = await http
+            .get(
+              Uri.parse("$_apiBaseUrl/check_status.php?student_id=$studentID"),
+              headers: {
+                "ngrok-skip-browser-warning": "true",
+                "Accept": "application/json",
+              },
+            )
+            .timeout(const Duration(seconds: 10));
 
-            if (mysqlData['status'] == 'Active' && isActive) {
-              _failedAttempts = 0;
-              if (!mounted) return;
-              Navigator.pushReplacementNamed(context, '/student_home');
-            } else {
-              await FirebaseAuth.instance.signOut();
-              _showError("Access Denied: Account is disabled or pending.");
-            }
+        if (response.statusCode == 200) {
+          final mysqlData = json.decode(response.body);
+
+          if (mysqlData['status'] == 'Active' && isActive) {
+            _failedAttempts = 0;
+            _navigateSafe('/student_home');
           } else {
-            throw "Unable to reach Master List server.";
+            await FirebaseAuth.instance.signOut();
+            _showError("Access Denied: Account is disabled or pending.");
           }
+        } else {
+          throw "Unable to reach Master List server.";
         }
       }
     } on FirebaseAuthException catch (e) {
-      setState(() {
-        _failedAttempts++;
-        if (_failedAttempts >= 3) {
-          _startLockout();
-        } else {
-          String msg = "Invalid credentials. Attempt $_failedAttempts/3";
-          if (e.code == 'user-not-found') msg = "ID not found.";
-          if (e.code == 'wrong-password') msg = "Incorrect password.";
-          _showError(msg);
-        }
-      });
+      if (mounted) {
+        setState(() {
+          _failedAttempts++;
+          if (_failedAttempts >= 3) {
+            _startLockout();
+          } else {
+            String msg = "Invalid credentials. Attempt $_failedAttempts/3";
+            if (e.code == 'user-not-found') msg = "ID not found.";
+            if (e.code == 'wrong-password') msg = "Incorrect password.";
+            _showError(msg);
+          }
+        });
+      }
     } catch (e) {
       _showError("System Error: $e");
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // A safe navigation helper to prevent GPU crashes during transitions
+  void _navigateSafe(String route) async {
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    // Tiny delay to let the UI stabilize before pushing a new route
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, route);
     }
   }
 
@@ -193,155 +200,167 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bgColor,
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 80),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: _darkBrown,
-                  borderRadius: BorderRadius.circular(20),
+      body: SafeArea(
+        // Ensures content doesn't hit the status bar
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: _darkBrown,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Icon(
+                    Icons.shield_outlined,
+                    color: Colors.amber,
+                    size: 60,
+                  ),
                 ),
-                child: const Icon(
-                  Icons.shield_outlined,
-                  color: Colors.amber,
-                  size: 60,
+                const SizedBox(height: 20),
+                const Text(
+                  "Discipline Portal",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                "Discipline Portal",
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
+                const Text(
+                  "Violation & Handbook Management",
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-              ),
-              const Text(
-                "Violation & Handbook Management",
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 50),
-              _buildInputLabel("Student ID / Email"),
-              TextField(
-                controller: _identifierController,
-                enabled: !_isLockedOut,
-                decoration: _inputDecoration("e.g. PDM-2024-000001"),
-              ),
-              if (_isLockedOut)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      "Locked out. Try again in $_secondsRemaining seconds.",
-                      style: const TextStyle(
-                        color: Colors.red,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
+                const SizedBox(height: 50),
+                _buildInputLabel("Student ID / Email"),
+                TextField(
+                  controller: _identifierController,
+                  enabled: !_isLockedOut,
+                  decoration: _inputDecoration("e.g. PDM-2024-000001"),
+                ),
+                if (_isLockedOut)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "Locked out. Try again in $_secondsRemaining seconds.",
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              const SizedBox(height: 20),
-              _buildInputLabel("Password"),
-              TextField(
-                controller: _passwordController,
-                enabled: !_isLockedOut,
-                obscureText: !_isPasswordVisible,
-                decoration: _inputDecoration(
-                  "********",
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _isPasswordVisible
-                          ? Icons.visibility
-                          : Icons.visibility_off,
-                      color: Colors.grey,
+                const SizedBox(height: 20),
+                _buildInputLabel("Password"),
+                TextField(
+                  controller: _passwordController,
+                  enabled: !_isLockedOut,
+                  obscureText: !_isPasswordVisible,
+                  decoration: _inputDecoration(
+                    "********",
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _isPasswordVisible
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                        color: Colors.grey,
+                      ),
+                      onPressed: _isLockedOut
+                          ? null
+                          : () => setState(
+                              () => _isPasswordVisible = !_isPasswordVisible,
+                            ),
                     ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
                     onPressed: _isLockedOut
-                        ? null
-                        : () => setState(
-                            () => _isPasswordVisible = !_isPasswordVisible,
-                          ),
-                  ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _isLockedOut
-                      ? null
-                      : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const ForgotPasswordScreen(),
-                          ),
-                        ),
-                  child: Text(
-                    "Forgot Password?",
-                    style: TextStyle(
-                      color: _isLockedOut ? Colors.grey : Colors.blue,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isLockedOut
-                        ? Colors.grey.shade400
-                        : _darkBrown,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: (_isLoading || _isLockedOut) ? null : loginUser,
-                  child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : Text(
-                          _isLockedOut ? "LOCKED" : "Sign In",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 30),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text(
-                    "New student? ",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  GestureDetector(
-                    onTap: _isLockedOut
                         ? null
                         : () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const RegisterScreen(),
+                              builder: (context) =>
+                                  const ForgotPasswordScreen(),
                             ),
                           ),
                     child: Text(
-                      "Create Account",
+                      "Forgot Password?",
                       style: TextStyle(
                         color: _isLockedOut ? Colors.grey : Colors.blue,
-                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
                       ),
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 55,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isLockedOut
+                          ? Colors.grey.shade400
+                          : _darkBrown,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: (_isLoading || _isLockedOut) ? null : loginUser,
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Text(
+                            _isLockedOut ? "LOCKED" : "Sign In",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      "New student? ",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    GestureDetector(
+                      onTap: _isLockedOut
+                          ? null
+                          : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const RegisterScreen(),
+                              ),
+                            ),
+                      child: Text(
+                        "Create Account",
+                        style: TextStyle(
+                          color: _isLockedOut ? Colors.grey : Colors.blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -368,16 +387,13 @@ class _LoginScreenState extends State<LoginScreen> {
       filled: true,
       fillColor: _isLockedOut ? const Color(0xFFFFF5F5) : Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-      disabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(
-          color: _isLockedOut ? Colors.red.shade400 : Colors.grey.shade300,
-          width: 1.5,
-        ),
-      ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
         borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.red.shade200),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),

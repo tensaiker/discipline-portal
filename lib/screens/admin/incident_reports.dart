@@ -11,13 +11,12 @@ class AdminIncidentReports extends StatefulWidget {
 
 class _AdminIncidentReportsState extends State<AdminIncidentReports> {
   String _searchQuery = "";
-  String _selectedTab = "All"; // Filter: All, Pending, Approved, Resolved
+  String _selectedTab = "All";
 
   final Color _darkBrown = const Color(0xFF513C2C);
   final Color _bgColor = const Color(0xFFE5DCD3);
   final Color _cardColor = const Color(0xFFF9F7F2);
 
-  // --- DATABASE LOGIC ---
   Future<void> _updateStatus(String docId, String newStatus) async {
     try {
       await FirebaseFirestore.instance
@@ -28,11 +27,13 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
             'lastUpdated': FieldValue.serverTimestamp(),
           });
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Report $newStatus successfully")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Incident marked as ${newStatus.toUpperCase()}"),
+        ),
+      );
     } catch (e) {
-      print("Error updating status: $e");
+      print("Error: $e");
     }
   }
 
@@ -46,8 +47,8 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           child: TextField(
             onChanged: (val) => setState(() => _searchQuery = val),
             decoration: InputDecoration(
-              hintText: "Search ID (Reporter or Student)",
-              prefixIcon: const Icon(Icons.search),
+              hintText: "Search Student ID...",
+              prefixIcon: Icon(Icons.search, color: _darkBrown),
               filled: true,
               fillColor: _cardColor,
               border: OutlineInputBorder(
@@ -58,7 +59,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           ),
         ),
 
-        // 2. CATEGORY TABS (Chips)
+        // 2. CATEGORY TABS
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -90,51 +91,26 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           child: StreamBuilder<QuerySnapshot>(
             stream: _getFilteredStream(),
             builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20.0),
-                    child: Text(
-                      "Firestore Error: ${snapshot.error}",
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                );
-              }
-
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
-
-              if (!snapshot.hasData) {
-                return const Center(child: Text("Loading data..."));
-              }
-
-              // --- CRASH FIX: Using data['field'] instead of doc['field'] ---
-              var docs = snapshot.data!.docs.where((doc) {
-                Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-
-                // Search both reporterID (new reports) and studentID (old records)
-                String rID = (data['reporterID'] ?? "")
-                    .toString()
-                    .toLowerCase();
-                String sID = (data['studentID'] ?? "").toString().toLowerCase();
-
-                return rID.contains(_searchQuery.toLowerCase()) ||
-                    sID.contains(_searchQuery.toLowerCase());
-              }).toList();
-
-              if (docs.isEmpty) {
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                 return const Center(child: Text("No incident reports found."));
               }
+
+              var docs = snapshot.data!.docs.where((doc) {
+                var data = doc.data() as Map<String, dynamic>;
+                String sID = (data['reporterID'] ?? "")
+                    .toString()
+                    .toLowerCase();
+                return sID.contains(_searchQuery.toLowerCase());
+              }).toList();
 
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 itemCount: docs.length,
-                itemBuilder: (context, index) {
-                  return _buildIncidentCard(docs[index], index + 1);
-                },
+                itemBuilder: (context, index) =>
+                    _buildIncidentCard(docs[index]),
               );
             },
           ),
@@ -151,16 +127,10 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
     return query.orderBy('timestamp', descending: true).snapshots();
   }
 
-  Widget _buildIncidentCard(DocumentSnapshot doc, int displayNum) {
-    // --- CRASH FIX: Always convert to Map first ---
+  Widget _buildIncidentCard(DocumentSnapshot doc) {
     var data = doc.data() as Map<String, dynamic>;
     String status = (data['status'] ?? 'pending').toString().toLowerCase();
-
-    // Date formatting
-    String dateStr = "N/A";
-    if (data['timestamp'] != null) {
-      dateStr = DateFormat('MMMM d, yyyy').format(data['timestamp'].toDate());
-    }
+    String evidenceUrl = data['evidenceUrl'] ?? "";
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -179,24 +149,51 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                "INCIDENT #$displayNum",
+                (data['type'] ?? "VIOLATION").toString().toUpperCase(),
                 style: const TextStyle(
                   fontWeight: FontWeight.w900,
-                  fontSize: 18,
+                  fontSize: 16,
                 ),
               ),
               _statusBadge(status),
             ],
           ),
           const Divider(height: 30),
+          _infoRow("REPORTER ID:", data['reporterID'] ?? "N/A"),
+          _infoRow("REPORTER NAME:", data['reporterName'] ?? "Unknown"),
 
-          // --- FIX: Show Reporter ID for incoming reports ---
-          _infoRow(
-            "REPORTED BY:",
-            data['reporterID'] ?? data['studentID'] ?? "Unknown",
+          const SizedBox(height: 15),
+
+          // --- EVIDENCE VIEWING SECTION ---
+          const Text(
+            "EVIDENCE:",
+            style: TextStyle(
+              color: Colors.grey,
+              fontWeight: FontWeight.bold,
+              fontSize: 11,
+            ),
           ),
-          _infoRow("VIOLATION TYPE:", data['type'] ?? "Other"),
-          _infoRow("DATE:", dateStr),
+          const SizedBox(height: 8),
+          if (evidenceUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                evidenceUrl,
+                height: 150,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  height: 100,
+                  color: Colors.grey[200],
+                  child: const Icon(Icons.broken_image),
+                ),
+              ),
+            )
+          else
+            const Text(
+              "No photo evidence provided.",
+              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+            ),
 
           const SizedBox(height: 15),
           const Text(
@@ -204,7 +201,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
             style: TextStyle(
               color: Colors.grey,
               fontWeight: FontWeight.bold,
-              fontSize: 12,
+              fontSize: 11,
             ),
           ),
           Container(
@@ -215,9 +212,10 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
               color: _cardColor,
               borderRadius: BorderRadius.circular(15),
             ),
-            child: Text(data['description'] ?? "No description provided."),
+            child: Text(data['description'] ?? "No details provided."),
           ),
 
+          // --- ACTION BUTTONS ---
           if (status == 'pending')
             Row(
               children: [
@@ -240,14 +238,14 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
             )
           else if (status == 'approved')
             _actionButton(
-              "MARK AS DONE",
+              "MARK AS RESOLVED",
               _darkBrown,
               () => _updateStatus(doc.id, 'resolved'),
             )
-          else if (status == 'resolved' || status == 'cleared')
+          else
             const Center(
               child: Text(
-                "✅ TASK COMPLETED",
+                "✅ ACTION COMPLETED",
                 style: TextStyle(
                   color: Colors.green,
                   fontWeight: FontWeight.bold,
@@ -261,20 +259,20 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
 
   Widget _infoRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           Text(
-            "$label  ",
+            "$label ",
             style: const TextStyle(
               color: Colors.grey,
               fontWeight: FontWeight.bold,
-              fontSize: 11,
+              fontSize: 10,
             ),
           ),
           Text(
             value,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
           ),
         ],
       ),
@@ -285,14 +283,11 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
     Color color = status == 'pending'
         ? Colors.amber
         : (status == 'approved' ? Colors.blue : Colors.green);
-
-    // Simple logic to handle 'declined'
     if (status == 'declined') color = Colors.red;
-
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
@@ -308,7 +303,6 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
 
   Widget _actionButton(String label, Color color, VoidCallback onPressed) {
     return SizedBox(
-      width: double.infinity,
       height: 45,
       child: ElevatedButton(
         onPressed: onPressed,
@@ -323,6 +317,7 @@ class _AdminIncidentReportsState extends State<AdminIncidentReports> {
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
+            fontSize: 12,
           ),
         ),
       ),

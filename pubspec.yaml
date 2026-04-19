@@ -34,8 +34,10 @@ dependencies:
   fl_chart: ^0.66.0
   google_fonts: ^6.2.1
   cupertino_icons: ^1.0.8
-  firebase_core: ^4.6.0
-  cloud_firestore: ^6.2.0 # Keep only this one!
+  firebase_core:
+  cloud_firestore:
+  firebase_storage:
+  firebase_database:
   firebase_auth: ^6.3.0
   image_picker: ^1.0.7
   http: ^1.2.0

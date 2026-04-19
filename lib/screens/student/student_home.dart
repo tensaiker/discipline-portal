@@ -21,8 +21,9 @@ class StudentHome extends StatelessWidget {
             .doc(user?.uid)
             .snapshots(),
         builder: (context, userSnapshot) {
-          if (!userSnapshot.hasData)
+          if (!userSnapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
+          }
 
           var userData = userSnapshot.data!.data() as Map<String, dynamic>;
           String name = userData['fullName'] ?? "Student";
@@ -30,34 +31,30 @@ class StudentHome extends StatelessWidget {
           String course = userData['course'] ?? "No Course";
 
           return StreamBuilder<QuerySnapshot>(
-            // 2. OFFENDER STREAM: Only violations assigned TO this student by Admin
+            // 2. OFFENDER STREAM: Only violations assigned TO this student
             stream: FirebaseFirestore.instance
                 .collection('violations')
                 .where('studentUid', isEqualTo: user?.uid)
                 .snapshots(),
             builder: (context, offenderSnapshot) {
-              if (!offenderSnapshot.hasData)
+              if (!offenderSnapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
+              }
 
               return StreamBuilder<QuerySnapshot>(
-                // 3. REPORTER STREAM: Only incidents THIS student reported (Witness reports)
+                // 3. REPORTER STREAM: Only incidents THIS student reported
                 stream: FirebaseFirestore.instance
                     .collection('violations')
                     .where('reporterUid', isEqualTo: user?.uid)
                     .snapshots(),
                 builder: (context, reporterSnapshot) {
-                  if (!reporterSnapshot.hasData)
+                  if (!reporterSnapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
+                  }
 
-                  // --- DATA LOGIC ---
-                  var myViolations = offenderSnapshot
-                      .data!
-                      .docs; // Things I COMMITTED (Perpetrator)
-                  var myReports = reporterSnapshot
-                      .data!
-                      .docs; // Things I REPORTED (Witness)
+                  var myViolations = offenderSnapshot.data!.docs;
+                  var myReports = reporterSnapshot.data!.docs;
 
-                  // 1. Active Violations (Only from things I committed)
                   int activeViolationsCount = myViolations
                       .where(
                         (d) =>
@@ -66,13 +63,10 @@ class StudentHome extends StatelessWidget {
                       )
                       .length;
 
-                  // 2. Dashboard Stats (Tracking the reports I submitted as a witness)
                   int totalIReported = myReports.length;
                   int pendingMyReports = myReports
                       .where((d) => d['status'] == 'pending')
                       .length;
-
-                  // 3. Resolved Violations (My own committed offenses that are now finished)
                   int myResolvedViolations = myViolations
                       .where(
                         (d) =>
@@ -80,16 +74,7 @@ class StudentHome extends StatelessWidget {
                             d['status'] == 'cleared',
                       )
                       .length;
-
-                  // 4. Alerts (Combined status of my witness reports)
-                  int myAlertsCount = myReports
-                      .where(
-                        (d) =>
-                            d['status'] == 'pending' ||
-                            d['status'] == 'approved' ||
-                            d['status'] == 'resolved',
-                      )
-                      .length;
+                  int myAlertsCount = myReports.length;
 
                   return SingleChildScrollView(
                     padding: const EdgeInsets.only(
@@ -101,7 +86,7 @@ class StudentHome extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // --- HEADER ---
+                        // --- HEADER (FIXED OVERFLOW) ---
                         Row(
                           children: [
                             Container(
@@ -118,33 +103,37 @@ class StudentHome extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 15),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  name,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                            // --- FIX: Wrap Column in Expanded to prevent right-side overflow ---
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    name,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  studentID,
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 12,
+                                  Text(
+                                    studentID,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 12,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  course,
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 12,
+                                  Text(
+                                    course,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 12,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                            const Spacer(),
                             IconButton(
                               icon: const Icon(
                                 Icons.logout_rounded,
@@ -176,11 +165,9 @@ class StudentHome extends StatelessWidget {
                         ),
                         const SizedBox(height: 25),
 
-                        // --- STATUS CARD: Only changes if YOU committed a violation ---
                         _buildActiveViolationCard(activeViolationsCount),
                         const SizedBox(height: 25),
 
-                        // --- STATS GRID: Tracking your Witness Reporting Activity ---
                         GridView.count(
                           crossAxisCount: 2,
                           shrinkWrap: true,
@@ -222,7 +209,6 @@ class StudentHome extends StatelessWidget {
                         ),
                         const SizedBox(height: 15),
 
-                        // --- RECENT RECORDS LIST: ONLY shows violations YOU committed ---
                         if (myViolations.isEmpty)
                           const Center(
                             child: Padding(
@@ -253,7 +239,6 @@ class StudentHome extends StatelessWidget {
     );
   }
 
-  // REUSABLE UI HELPERS (Designs remain unchanged)
   Widget _buildActiveViolationCard(int count) {
     bool isClear = count == 0;
     return Container(
@@ -319,9 +304,9 @@ class StudentHome extends StatelessWidget {
           children: [
             Container(
               width: 6,
-              decoration: BoxDecoration(
-                color: Colors.red, // Always red for committed violations
-                borderRadius: const BorderRadius.only(
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(15),
                   bottomLeft: Radius.circular(15),
                 ),
