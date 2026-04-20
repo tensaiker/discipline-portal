@@ -74,14 +74,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleIDScan() async {
     if (_selectedIdPhoto == null) return;
     setState(() => _isVerifying = true);
+
     try {
       final data = await _service.fetchMasterData(imageFile: _selectedIdPhoto!);
+
       if (data != null) {
-        _fillFormWithData(data);
-        _pageController.nextPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.ease,
-        );
+        // 🛑 CHECK THE STATUS FIRST!
+        if (data['status'] == 'already_registered') {
+          _showSnackBar(
+            "Access Denied: This ID (${data['studentID']}) is already registered.",
+            Colors.red,
+          );
+          // Do NOT call nextPage here. Stop the user!
+        } else if (data['status'] == 'inactive') {
+          _showSnackBar(
+            "This student is currently Disabled. Contact SDO.",
+            Colors.red,
+          );
+        } else {
+          // ✅ SUCCESS: This is a new, valid student
+          _fillFormWithData(data);
+          _pageController.nextPage(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.ease,
+          );
+        }
       } else {
         _showSnackBar(
           "ID not found in Master List. Ensure the text is clear.",
@@ -91,7 +108,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (e) {
       _showSnackBar("Scan Error: Check your Ngrok connection.", Colors.red);
     } finally {
-      setState(() => _isVerifying = false);
+      if (mounted) setState(() => _isVerifying = false);
     }
   }
 

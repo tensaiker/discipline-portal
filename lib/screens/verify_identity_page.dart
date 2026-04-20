@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../verification_service.dart'; // ✅ Path to your service logic
-import 'package:discipline/screens/auth/register_screen.dart'; // ✅ Project-level import
+import '../../verification_service.dart'; // [cite: 5]
+import 'package:discipline/screens/auth/register_screen.dart'; // [cite: 6]
 
 class VerifyIdentityPage extends StatefulWidget {
   const VerifyIdentityPage({super.key});
@@ -13,27 +13,25 @@ class VerifyIdentityPage extends StatefulWidget {
 }
 
 class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
-  final _service = VerificationService();
-  File? _selectedIdPhoto;
-  bool _isVerifying = false;
+  final _service = VerificationService(); // [cite: 13]
+  File? _selectedIdPhoto; // [cite: 14]
+  bool _isVerifying = false; // [cite: 15]
 
   // Design Colors (PDM Theme)
-  final Color _darkBrown = const Color(0xFF513C2C);
-  final Color _yellow = const Color(0xFFFFC107);
-  final Color _bgColor = const Color(0xFFF9F7F2);
+  final Color _darkBrown = const Color(0xFF513C2C); // [cite: 17]
+  final Color _yellow = const Color(0xFFFFC107); // [cite: 18]
+  final Color _bgColor = const Color(0xFFF9F7F2); // [cite: 19]
 
-  // ✅ LOGIC: OPEN CAMERA OR GALLERY
   Future<void> _pickImage(ImageSource source) async {
     final picker = ImagePicker();
     try {
       final XFile? image = await picker.pickImage(
         source: source,
-        imageQuality: 70, // Compresses to 70% for faster OCR processing
+        imageQuality: 70, // [cite: 26]
       );
-
       if (image != null) {
         setState(() {
-          _selectedIdPhoto = File(image.path);
+          _selectedIdPhoto = File(image.path); // [cite: 30]
         });
       }
     } catch (e) {
@@ -41,7 +39,6 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
     }
   }
 
-  // ✅ UI: CHOICE MENU (Pop-up from bottom)
   void _showPickerOptions() {
     showModalBottomSheet(
       context: context,
@@ -60,89 +57,79 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
                 fontSize: 18,
                 color: _darkBrown,
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              "Select a method to provide your Student ID.",
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
+            ), // [cite: 50-54]
             const SizedBox(height: 30),
-
-            // OPTION 1: SCAN WITH CAMERA
             ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.document_scanner_rounded,
-                  color: Colors.orange,
-                ),
+              leading: const Icon(
+                Icons.document_scanner_rounded,
+                color: Colors.orange,
               ),
               title: const Text(
                 "Scan ID Card (Camera)",
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: const Text("Point your camera at the ID"),
               onTap: () {
                 Navigator.pop(context);
-                _pickImage(ImageSource.camera); // ✅ LAUNCHES CAMERA
+                _pickImage(ImageSource.camera); // [cite: 83]
               },
             ),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 15),
-              child: Divider(),
-            ),
-
-            // OPTION 2: FIND IN GALLERY
             ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.photo_library_rounded,
-                  color: Colors.blue,
-                ),
+              leading: const Icon(
+                Icons.photo_library_rounded,
+                color: Colors.blue,
               ),
               title: const Text(
                 "Find in Gallery",
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: const Text("Upload a photo you already took"),
               onTap: () {
                 Navigator.pop(context);
-                _pickImage(ImageSource.gallery); // ✅ LAUNCHES GALLERY
+                _pickImage(ImageSource.gallery); // [cite: 110]
               },
             ),
-            const SizedBox(height: 15),
           ],
         ),
       ),
     );
   }
 
-  // LOGIC: OCR SCAN & FIREBASE HANDSHAKE
+  // ✅ LOGIC: OCR SCAN & FIREBASE HANDSHAKE
   Future<void> _handleVerification() async {
-    if (_selectedIdPhoto == null) return;
-    setState(() => _isVerifying = true);
+    if (_selectedIdPhoto == null) return; // [cite: 121]
+    setState(() => _isVerifying = true); // [cite: 122]
 
     try {
       final Map<String, dynamic>? studentData = await _service.fetchMasterData(
         imageFile: _selectedIdPhoto!,
-      );
+      ); // [cite: 124-126]
 
       if (studentData != null) {
         if (!mounted) return;
+
+        // 🛑 STOP: Check if ID is already in Firebase
+        if (studentData['status'] == 'already_registered') {
+          _showErrorPopup(
+            "Already Registered",
+            "The ID ${studentData['studentID']} is already linked to an account. Please log in instead.",
+          );
+          return;
+        }
+
+        // 🛑 STOP: Check if student is Disabled in XAMPP
+        if (studentData['status'] == 'inactive') {
+          _showErrorPopup(
+            "Account Disabled",
+            "This PDM ID is currently disabled. Please contact the SDO.",
+          );
+          return;
+        }
+
+        // ✅ SUCCESS: Proceed to Registration
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => RegisterScreen(autoFillData: studentData),
+            builder: (context) =>
+                RegisterScreen(autoFillData: studentData), // [cite: 132]
           ),
         );
       } else {
@@ -150,13 +137,37 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
         _showSnackBar(
           "ID not found. Make sure the photo is clear.",
           Colors.red,
-        );
+        ); // [cite: 137-140]
       }
     } catch (e) {
-      _showSnackBar("System Error: $e", Colors.red);
+      _showSnackBar("System Error: $e", Colors.red); // [cite: 143]
     } finally {
-      if (mounted) setState(() => _isVerifying = false);
+      if (mounted) setState(() => _isVerifying = false); // [cite: 145]
     }
+  }
+
+  // ✅ HELPER: POPUP FOR ERRORS
+  void _showErrorPopup(String title, String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.red,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String msg, Color color) {
@@ -164,14 +175,14 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
       SnackBar(
         content: Text(msg),
         backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
+        behavior: SnackBarBehavior.floating, // [cite: 153]
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    bool hasFile = _selectedIdPhoto != null;
+    bool hasFile = _selectedIdPhoto != null; // [cite: 159]
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: AppBar(
@@ -181,13 +192,13 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
             fontWeight: FontWeight.bold,
             color: _darkBrown,
           ),
-        ),
+        ), // [cite: 163-167]
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black, size: 20),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context), // [cite: 175]
         ),
       ),
       body: Padding(
@@ -201,10 +212,8 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
               "Please scan your PDM Student ID to verify your identity.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
+            ), // [cite: 185-188]
             const SizedBox(height: 40),
-
-            // ✅ INTERACTIVE BOX: Opens the Selection Menu
             Expanded(
               child: GestureDetector(
                 onTap: _isVerifying ? null : _showPickerOptions,
@@ -216,24 +225,15 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
                     border: Border.all(
                       color: hasFile ? Colors.green.shade200 : Colors.black12,
                       width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                      ),
-                    ],
+                    ), // [cite: 197-203]
                   ),
                   child: hasFile
                       ? _buildFilePreview()
-                      : _buildUploadPlaceholder(),
+                      : _buildUploadPlaceholder(), // [cite: 211-213]
                 ),
               ),
             ),
-
             const SizedBox(height: 40),
-
-            // MAIN BUTTON
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -246,7 +246,7 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
                 ),
                 onPressed: (hasFile && !_isVerifying)
                     ? _handleVerification
-                    : null,
+                    : null, // [cite: 229-231]
                 child: _isVerifying
                     ? const CircularProgressIndicator(color: Colors.white)
                     : const Text(
@@ -256,7 +256,7 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
                         ),
-                      ),
+                      ), // [cite: 232-241]
               ),
             ),
             const SizedBox(height: 20),
@@ -278,7 +278,7 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
           decoration: BoxDecoration(
             color: i == 0 ? _yellow : Colors.grey.shade300,
             shape: BoxShape.circle,
-          ),
+          ), // [cite: 255-262]
         ),
       ),
     );
@@ -297,13 +297,13 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
             fontWeight: FontWeight.bold,
             fontSize: 16,
           ),
-        ),
+        ), // [cite: 274-279]
         TextButton(
           onPressed: () => setState(() => _selectedIdPhoto = null),
           child: const Text(
             "Remove and Rescan",
             style: TextStyle(color: Colors.red),
-          ),
+          ), // [cite: 284-285]
         ),
       ],
     );
@@ -314,19 +314,19 @@ class _VerifyIdentityPageState extends State<VerifyIdentityPage> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(
-          Icons.document_scanner_outlined, // ✅ Pro Scanner Icon
+          Icons.document_scanner_outlined,
           color: Colors.amber.shade900,
           size: 60,
-        ),
+        ), // [cite: 295-298]
         const SizedBox(height: 20),
         const Text(
           "Tap to Scan Student ID",
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
+        ), // [cite: 302-303]
         const Text(
           "Use Camera or Upload from Gallery",
           style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
+        ), // [cite: 306-307]
       ],
     );
   }
